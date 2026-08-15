@@ -41,6 +41,8 @@ npm run tauri dev
 npm run tauri build
 ```
 
+Windows 仅生成简体中文 NSIS `-setup.exe` 安装程序，默认按当前用户安装，无需管理员权限。
+
 ## 技术栈
 
 - Tauri 2 / Rust

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Check,
   Edit3,
@@ -280,12 +281,21 @@ function App() {
     }
   };
 
+  const startWindowDrag = (event: React.MouseEvent<HTMLElement>) => {
+    if (event.button !== 0 || !isTauriRuntime()) return;
+    const target = event.target as HTMLElement;
+    if (target.closest("button, input, textarea, a, [role='button']")) return;
+    void getCurrentWindow().startDragging().catch((dragError) => {
+      setError(`移动悬浮窗失败：${String(dragError)}`);
+    });
+  };
+
   return (
     <main className="app-shell">
-      <header className="titlebar" data-tauri-drag-region>
-        <div className="brand" data-tauri-drag-region>
+      <header className="titlebar" onMouseDown={startWindowDrag}>
+        <div className="brand">
           <span className="brand-mark" aria-hidden="true">S</span>
-          <div data-tauri-drag-region>
+          <div>
             <strong>Skill Float</strong>
             <span>轻按一下，调用所需能力</span>
           </div>
