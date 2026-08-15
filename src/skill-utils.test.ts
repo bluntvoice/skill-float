@@ -10,6 +10,10 @@ const skill = (partial: Partial<Skill>): Skill => ({
   source: "本地 Skill",
   sourcePath: "C:\\Skill.md",
   favorite: false,
+  category: "",
+  tags: [],
+  usageCount: 0,
+  usageSources: {},
   ...partial,
 });
 

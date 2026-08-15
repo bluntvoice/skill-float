@@ -6,6 +6,7 @@ import {
   Check,
   Edit3,
   Languages,
+  BarChart3,
   LoaderCircle,
   Minus,
   Search,
@@ -16,11 +17,13 @@ import {
 } from "lucide-react";
 import "./App.css";
 import { TranslationCenter } from "./TranslationCenter";
+import { UsagePanel } from "./UsagePanel";
 import {
   isTauriRuntime,
   mockSuggestion,
   type AliasUpdate,
   type TranslationSuggestion,
+  type TranslationDraft,
 } from "./translation";
 import {
   MOCK_SKILLS,
@@ -30,12 +33,14 @@ import {
   titleFor,
   type Skill,
 } from "./skill-utils";
+import { EMPTY_USAGE, type UsageScanProgress, type UsageSummary } from "./usage";
 
 type FilterMode = "all" | "favorites";
 
 type PasteOutcome = {
   inserted: boolean;
   copied: boolean;
+  usageCount: number;
 };
 
 type RuntimeInfo = {
@@ -52,8 +57,14 @@ function App() {
   const [translationOpen, setTranslationOpen] = useState(
     () => import.meta.env.DEV && !isTauriRuntime() && new URLSearchParams(window.location.search).has("translation"),
   );
+  const [usageOpen, setUsageOpen] = useState(
+    () => import.meta.env.DEV && !isTauriRuntime() && new URLSearchParams(window.location.search).has("usage"),
+  );
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
+  const [draftCategory, setDraftCategory] = useState("");
+  const [draftTags, setDraftTags] = useState("");
+  const [translationDrafts, setTranslationDrafts] = useState<Record<string, TranslationSuggestion>>({});
   const [suggestion, setSuggestion] = useState<TranslationSuggestion | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -61,19 +72,41 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [shortcut, setShortcut] = useState("Alt+S");
+  const [usage, setUsage] = useState<UsageSummary>(EMPTY_USAGE);
+  const [refreshingUsage, setRefreshingUsage] = useState(false);
+  const [usageProgress, setUsageProgress] = useState<UsageScanProgress | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const refreshingUsageRef = useRef(false);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [result, runtime] = isTauriRuntime()
+      const [result, runtime, initialUsage, drafts] = isTauriRuntime()
         ? await Promise.all([
             invoke<Skill[]>("list_skills"),
             invoke<RuntimeInfo>("runtime_info"),
+            invoke<UsageSummary>("get_usage_stats"),
+            invoke<TranslationDraft[]>("list_translation_drafts"),
           ])
-        : [MOCK_SKILLS, { shortcut: "Alt+S", fallbackUsed: false }];
-      setSkills(sortSkills(result));
+        : [MOCK_SKILLS, { shortcut: "Alt+S", fallbackUsed: false }, {
+            ...EMPTY_USAGE,
+            total: MOCK_SKILLS.reduce((sum, skill) => sum + skill.usageCount, 0),
+            skills: MOCK_SKILLS.map((skill) => ({ invocation: skill.invocation, count: skill.usageCount, sourceCounts: skill.usageSources })),
+            sources: [
+              { name: "Skill Float", detected: true, files: 0, count: 9 },
+              { name: "Codex", detected: true, files: 128, count: 33 },
+              { name: "Claude Code", detected: true, files: 6, count: 3 },
+              { name: "OpenClaw", detected: false, files: 0, count: 0 },
+            ],
+          } satisfies UsageSummary, [] as TranslationDraft[]];
+      const usageBySkill = new Map(initialUsage.skills.map((item) => [item.invocation, item]));
+      setSkills(sortSkills(result.map((skill) => {
+        const item = usageBySkill.get(skill.invocation);
+        return { ...skill, usageCount: item?.count ?? skill.usageCount ?? 0, usageSources: item?.sourceCounts ?? skill.usageSources ?? {} };
+      })));
+      setUsage(initialUsage);
+      setTranslationDrafts(Object.fromEntries(drafts.map((draft) => [draft.invocation, draft.suggestion])));
       setShortcut(runtime.shortcut);
       if (runtime.fallbackUsed) {
         setNotice(`Alt+S 已被其他程序占用，当前唤出快捷键为 ${runtime.shortcut}`);
@@ -86,6 +119,28 @@ function App() {
     }
   }, []);
 
+  const refreshUsage = useCallback(async () => {
+    if (!isTauriRuntime() || refreshingUsageRef.current) return;
+    refreshingUsageRef.current = true;
+    setRefreshingUsage(true);
+    setUsageProgress(null);
+    try {
+      const refreshed = await invoke<UsageSummary>("refresh_usage_stats");
+      const bySkill = new Map(refreshed.skills.map((item) => [item.invocation, item]));
+      setUsage(refreshed);
+      setSkills((current) => current.map((skill) => {
+        const item = bySkill.get(skill.invocation);
+        return { ...skill, usageCount: item?.count ?? 0, usageSources: item?.sourceCounts ?? {} };
+      }));
+    } catch (refreshError) {
+      setError(`读取调用历史失败：${String(refreshError)}`);
+    } finally {
+      setRefreshingUsage(false);
+      refreshingUsageRef.current = false;
+      setUsageProgress(null);
+    }
+  }, []);
+
   useEffect(() => {
     void loadSkills();
     if (!isTauriRuntime()) return;
@@ -94,10 +149,29 @@ function App() {
       setSelectedIndex(0);
       requestAnimationFrame(() => searchRef.current?.focus());
     });
+    const unlistenProgress = listen<UsageScanProgress>("usage-scan-progress", (event) => {
+      refreshingUsageRef.current = true;
+      setRefreshingUsage(true);
+      setUsageProgress(event.payload);
+    });
+    const unlistenUsage = listen<UsageSummary>("usage-stats-updated", (event) => {
+      const refreshed = event.payload;
+      const bySkill = new Map(refreshed.skills.map((item) => [item.invocation, item]));
+      setUsage(refreshed);
+      setSkills((current) => current.map((skill) => {
+        const item = bySkill.get(skill.invocation);
+        return { ...skill, usageCount: item?.count ?? 0, usageSources: item?.sourceCounts ?? {} };
+      }));
+      setRefreshingUsage(false);
+      refreshingUsageRef.current = false;
+      setUsageProgress(null);
+    });
     return () => {
       void unlisten.then((dispose) => dispose());
+      void unlistenProgress.then((dispose) => dispose());
+      void unlistenUsage.then((dispose) => dispose());
     };
-  }, [loadSkills]);
+  }, [loadSkills, refreshUsage]);
 
   const visibleSkills = useMemo(
     () =>
@@ -132,6 +206,19 @@ function App() {
       const outcome = await invoke<PasteOutcome>("paste_skill", {
         invocation: skill.invocation,
       });
+      setSkills((current) => current.map((item) => item.invocation === skill.invocation
+        ? { ...item, usageCount: outcome.usageCount, usageSources: { ...item.usageSources, "Skill Float": (item.usageSources["Skill Float"] ?? 0) + 1 } }
+        : item));
+      setUsage((current) => ({
+        ...current,
+        total: current.total + 1,
+        skills: current.skills.some((item) => item.invocation === skill.invocation)
+          ? current.skills.map((item) => item.invocation === skill.invocation
+              ? { ...item, count: outcome.usageCount, sourceCounts: { ...item.sourceCounts, "Skill Float": (item.sourceCounts["Skill Float"] ?? 0) + 1 } }
+              : item)
+          : [...current.skills, { invocation: skill.invocation, count: outcome.usageCount, sourceCounts: { "Skill Float": 1 } }],
+        sources: current.sources.map((source) => source.name === "Skill Float" ? { ...source, count: source.count + 1 } : source),
+      }));
       if (!outcome.inserted && outcome.copied) {
         setNotice("未找到唤出前的输入框，调用文本已复制到剪贴板");
       }
@@ -144,7 +231,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (editing || translationOpen) return;
+      if (editing || translationOpen || usageOpen) return;
       if (event.key === "Escape") {
         event.preventDefault();
         void hide();
@@ -165,7 +252,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editing, hide, runSkill, selectedIndex, translationOpen, visibleSkills]);
+  }, [editing, hide, runSkill, selectedIndex, translationOpen, usageOpen, visibleSkills]);
 
   useEffect(() => {
     document
@@ -177,7 +264,9 @@ function App() {
     setEditing(skill);
     setDraftName(skill.displayName);
     setDraftDescription(skill.localizedDescription);
-    setSuggestion(null);
+    setDraftCategory(skill.category);
+    setDraftTags(skill.tags.join("、"));
+    setSuggestion(translationDrafts[skill.invocation] ?? null);
     setSuggesting(false);
     setError("");
   };
@@ -187,6 +276,8 @@ function App() {
     displayName: string,
     localizedDescription: string,
     favorite: boolean,
+    category: string,
+    tags: string[],
   ) => {
     if (isTauriRuntime()) {
       await invoke("save_skill_alias", {
@@ -194,6 +285,8 @@ function App() {
         displayName,
         localizedDescription,
         favorite,
+        category,
+        tags,
       });
     }
     setSkills((current) =>
@@ -205,6 +298,8 @@ function App() {
                 displayName,
                 localizedDescription,
                 favorite,
+                category,
+                tags,
               }
             : item,
         ),
@@ -241,6 +336,7 @@ function App() {
           })
         : mockSuggestion(editing);
       setSuggestion(result);
+      setTranslationDrafts((current) => ({ ...current, [editing.invocation]: result }));
     } catch (suggestionError) {
       setError(`生成中文推荐失败：${String(suggestionError)}`);
     } finally {
@@ -255,6 +351,8 @@ function App() {
         skill.displayName,
         skill.localizedDescription,
         !skill.favorite,
+        skill.category,
+        skill.tags,
       );
     } catch (favoriteError) {
       setError(`保存收藏失败：${String(favoriteError)}`);
@@ -271,7 +369,17 @@ function App() {
         draftName.trim(),
         draftDescription.trim(),
         editing.favorite,
+        draftCategory.trim(),
+        draftTags.split(/[、,，]/u).map((tag) => tag.trim()).filter(Boolean),
       );
+      if (isTauriRuntime()) {
+        await invoke("delete_translation_drafts", { invocations: [editing.invocation] }).catch(() => undefined);
+      }
+      setTranslationDrafts((current) => {
+        const next = { ...current };
+        delete next[editing.invocation];
+        return next;
+      });
       setEditing(null);
       setNotice("中文名称与用途已保存");
       requestAnimationFrame(() => searchRef.current?.focus());
@@ -352,9 +460,14 @@ function App() {
               收藏 <span>{skills.filter((skill) => skill.favorite).length}</span>
             </button>
           </div>
+          <div className="toolbar-actions">
+          <button className="translation-center-button" onClick={() => { setUsageOpen(true); setError(""); }}>
+            <BarChart3 size={15} /> 分类与使用
+          </button>
           <button className="translation-center-button" onClick={() => { setTranslationOpen(true); setError(""); }}>
             <Languages size={15} /> AI 汉化
           </button>
+          </div>
         </div>
       </section>
 
@@ -399,7 +512,7 @@ function App() {
                       {skill.displayName && <span className="real-name">{skill.name}</span>}
                     </span>
                     <span className="skill-description">{description}</span>
-                    <span className="skill-meta"><code>${skill.invocation}</code><span>{skill.source}</span></span>
+                    <span className="skill-meta"><code>${skill.invocation}</code><span>{skill.source}</span>{skill.category && <span className="category-chip">{skill.category}</span>}<span className="usage-count">调用 {skill.usageCount} 次</span></span>
                   </span>
                 </button>
                 <div className="row-actions">
@@ -483,11 +596,13 @@ function App() {
                 </div>
                 <strong>{suggestion.shortName}</strong>
                 <p>{suggestion.descriptionZh}</p>
+                <div className="suggestion-classification"><span>{suggestion.category}</span>{suggestion.tags.map((tag) => <i key={tag}>{tag}</i>)}</div>
                 {suggestion.notice && <div className="fallback-note">{suggestion.notice}</div>}
                 <div className="suggestion-actions">
                   <button type="button" onClick={() => setDraftName(suggestion.shortName)}>采用简称</button>
                   <button type="button" onClick={() => setDraftDescription(suggestion.descriptionZh)}>采用用途</button>
-                  <button type="button" onClick={() => { setDraftName(suggestion.shortName); setDraftDescription(suggestion.descriptionZh); }}>全部采用</button>
+                  <button type="button" onClick={() => { setDraftName(suggestion.shortName); setDraftDescription(suggestion.descriptionZh); setDraftCategory(suggestion.category); setDraftTags(suggestion.tags.join("、")); }}>全部采用</button>
+                  <button type="button" onClick={() => { setDraftCategory(suggestion.category); setDraftTags(suggestion.tags.join("、")); }}>采用分类</button>
                 </div>
               </div>
             )}
@@ -510,6 +625,13 @@ function App() {
               maxLength={500}
               rows={4}
             />
+            <label htmlFor="alias-category">分类</label>
+            <select id="alias-category" value={draftCategory} onChange={(event) => setDraftCategory(event.target.value)}>
+              <option value="">未分类</option>
+              {["开发与代码", "文档与内容", "设计与多媒体", "数据与自动化", "法律与专业", "沟通与协作", "其他"].map((category) => <option key={category}>{category}</option>)}
+            </select>
+            <label htmlFor="alias-tags">标签</label>
+            <input id="alias-tags" value={draftTags} onChange={(event) => setDraftTags(event.target.value)} placeholder="用顿号或逗号分隔，最多 8 个" maxLength={160} />
             <div className="original-description">
               <span>原始说明</span>
               <p>{editing.description || "此 Skill 没有提供原始说明。"}</p>
@@ -535,6 +657,16 @@ function App() {
             await applyBatchAliases(updates);
             setNotice(`已应用 ${updates.length} 项中文推荐`);
           }}
+        />
+      )}
+      {usageOpen && (
+        <UsagePanel
+          skills={skills}
+          summary={usage}
+          refreshing={refreshingUsage}
+          progress={usageProgress}
+          onRefresh={refreshUsage}
+          onClose={() => { setUsageOpen(false); requestAnimationFrame(() => searchRef.current?.focus()); }}
         />
       )}
     </main>

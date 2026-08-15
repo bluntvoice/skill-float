@@ -9,6 +9,8 @@ export type TranslationSettings = {
 export type TranslationSuggestion = {
   shortName: string;
   descriptionZh: string;
+  category: string;
+  tags: string[];
   engine: "ai" | "local";
   notice?: string | null;
 };
@@ -18,6 +20,14 @@ export type AliasUpdate = {
   displayName: string;
   localizedDescription: string;
   favorite: boolean;
+  category: string;
+  tags: string[];
+};
+
+export type TranslationDraft = {
+  invocation: string;
+  suggestion: TranslationSuggestion;
+  generatedAt: number;
 };
 
 export const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -43,12 +53,21 @@ export const mockSuggestion = (skill: Skill): TranslationSuggestion => {
     .slice(0, 3);
   const shortName = labels.join("") || "技能助手";
   const hasChinese = /[\u3400-\u9fff]/u.test(skill.description);
+  const category = source.match(/legal|contract|court|litigation/) ? "法律与专业"
+    : source.match(/image|photo|video|audio|design|presentation/) ? "设计与多媒体"
+    : source.match(/document|pdf|article|book|word/) ? "文档与内容"
+    : source.match(/email|calendar|meeting/) ? "沟通与协作"
+    : source.match(/data|spreadsheet|automation|workflow/) ? "数据与自动化"
+    : source.match(/code|git|frontend|react|release|ci/) ? "开发与代码"
+    : "其他";
   return {
     shortName,
     descriptionZh: hasChinese
       ? skill.description
       : `用于${shortName}，根据 Skill 原始说明完成对应任务。`,
     engine: "local",
+    category,
+    tags: labels.slice(0, 4).length ? labels.slice(0, 4) : ["通用"],
     notice: "浏览器预览模式使用本地推荐。",
   };
 };

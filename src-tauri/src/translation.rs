@@ -2,8 +2,10 @@ use keyring::{Entry, Error as KeyringError};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1";
@@ -24,11 +26,23 @@ pub struct TranslationSettingsView {
     has_api_key: bool,
 }
 
-#[derive(Clone, Debug, Serialize)]
+const CATEGORIES: [&str; 7] = [
+    "开发与代码",
+    "文档与内容",
+    "设计与多媒体",
+    "数据与自动化",
+    "法律与专业",
+    "沟通与协作",
+    "其他",
+];
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranslationSuggestion {
     short_name: String,
     description_zh: String,
+    category: String,
+    tags: Vec<String>,
     engine: String,
     notice: Option<String>,
 }
@@ -37,6 +51,22 @@ pub struct TranslationSuggestion {
 struct AiSuggestion {
     short_name: String,
     description_zh: String,
+    category: String,
+    tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranslationDraft {
+    invocation: String,
+    suggestion: TranslationSuggestion,
+    generated_at: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+struct TranslationDraftStore {
+    drafts: BTreeMap<String, TranslationDraft>,
 }
 
 fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -44,6 +74,51 @@ fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_config_dir()
         .map(|dir| dir.join("translation-settings.json"))
         .map_err(|error| format!("无法确定应用配置目录：{error}"))
+}
+
+fn drafts_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|dir| dir.join("translation-drafts.json"))
+        .map_err(|error| format!("无法确定应用配置目录：{error}"))
+}
+
+fn read_drafts(path: &Path) -> Result<TranslationDraftStore, String> {
+    if !path.exists() {
+        return Ok(TranslationDraftStore::default());
+    }
+    let content = fs::read_to_string(path).map_err(|error| format!("读取推荐草稿失败：{error}"))?;
+    serde_json::from_str(&content).map_err(|error| format!("推荐草稿格式无效：{error}"))
+}
+
+fn write_drafts(path: &Path, store: &TranslationDraftStore) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("创建配置目录失败：{error}"))?;
+    }
+    let content = serde_json::to_string_pretty(store)
+        .map_err(|error| format!("生成推荐草稿失败：{error}"))?;
+    fs::write(path, format!("{content}\n")).map_err(|error| format!("保存推荐草稿失败：{error}"))
+}
+
+fn save_draft(
+    app: &tauri::AppHandle,
+    invocation: &str,
+    suggestion: &TranslationSuggestion,
+) -> Result<(), String> {
+    let path = drafts_path(app)?;
+    let mut store = read_drafts(&path)?;
+    store.drafts.insert(
+        invocation.to_string(),
+        TranslationDraft {
+            invocation: invocation.to_string(),
+            suggestion: suggestion.clone(),
+            generated_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        },
+    );
+    write_drafts(&path, &store)
 }
 
 fn read_settings(path: &Path) -> Result<StoredTranslationSettings, String> {
@@ -150,6 +225,135 @@ fn contains_chinese(value: &str) -> bool {
         .any(|character| matches!(character as u32, 0x3400..=0x9fff))
 }
 
+fn normalize_category(value: &str) -> String {
+    let normalized = normalize(value, 40);
+    CATEGORIES
+        .iter()
+        .find(|category| **category == normalized)
+        .copied()
+        .unwrap_or("其他")
+        .to_string()
+}
+
+fn normalize_tags(values: Vec<String>) -> Vec<String> {
+    let mut tags = BTreeSet::new();
+    for value in values {
+        let tag = normalize(&value, 12);
+        if !tag.is_empty() {
+            tags.insert(tag);
+        }
+        if tags.len() == 4 {
+            break;
+        }
+    }
+    tags.into_iter().collect()
+}
+
+fn offline_classification(
+    invocation: &str,
+    name: &str,
+    description: &str,
+) -> (String, Vec<String>) {
+    let source = format!("{invocation} {name} {description}").to_lowercase();
+    let category = if [
+        "legal",
+        "law",
+        "court",
+        "contract",
+        "litigation",
+        "patent",
+        "trademark",
+    ]
+    .iter()
+    .any(|token| source.contains(token))
+    {
+        "法律与专业"
+    } else if [
+        "image",
+        "photo",
+        "video",
+        "audio",
+        "design",
+        "svg",
+        "ppt",
+        "presentation",
+    ]
+    .iter()
+    .any(|token| source.contains(token))
+    {
+        "设计与多媒体"
+    } else if [
+        "document", "article", "book", "pdf", "word", "write", "content",
+    ]
+    .iter()
+    .any(|token| source.contains(token))
+    {
+        "文档与内容"
+    } else if ["calendar", "email", "gmail", "slack", "teams", "meeting"]
+        .iter()
+        .any(|token| source.contains(token))
+    {
+        "沟通与协作"
+    } else if [
+        "data",
+        "spreadsheet",
+        "excel",
+        "automation",
+        "workflow",
+        "batch",
+    ]
+    .iter()
+    .any(|token| source.contains(token))
+    {
+        "数据与自动化"
+    } else if [
+        "code", "git", "github", "frontend", "react", "plugin", "release", "ci",
+    ]
+    .iter()
+    .any(|token| source.contains(token))
+    {
+        "开发与代码"
+    } else {
+        "其他"
+    };
+    let tag_rules = [
+        ("github", "GitHub"),
+        ("git", "Git"),
+        ("legal", "法律"),
+        ("contract", "合同"),
+        ("document", "文档"),
+        ("pdf", "PDF"),
+        ("image", "图像"),
+        ("video", "视频"),
+        ("audio", "音频"),
+        ("ocr", "OCR"),
+        ("translation", "翻译"),
+        ("design", "设计"),
+        ("research", "研究"),
+        ("review", "审查"),
+        ("automation", "自动化"),
+        ("workflow", "流程"),
+        ("email", "邮件"),
+        ("calendar", "日历"),
+    ];
+    let mut tags = Vec::new();
+    for (token, tag) in tag_rules {
+        if source.contains(token)
+            && !(token == "git" && source.contains("github"))
+            && !tags.contains(&tag.to_string())
+        {
+            tags.push(tag.to_string());
+        }
+        if tags.len() == 4 {
+            break;
+        }
+    }
+    if tags.is_empty() {
+        tags.push("通用".to_string());
+    }
+    (category.to_string(), tags)
+}
+
 fn offline_short_name(invocation: &str, name: &str) -> String {
     let source = format!("{invocation} {name}").to_lowercase();
     let rules = [
@@ -219,9 +423,12 @@ fn local_suggestion(
     } else {
         format!("用于{short_name}，根据 Skill 原始说明完成对应任务。")
     };
+    let (category, tags) = offline_classification(invocation, name, description);
     TranslationSuggestion {
         short_name,
         description_zh,
+        category,
+        tags,
         engine: "local".to_string(),
         notice,
     }
@@ -247,6 +454,8 @@ fn extract_suggestion(content: &str) -> Result<AiSuggestion, String> {
     Ok(AiSuggestion {
         short_name,
         description_zh,
+        category: normalize_category(&raw.category),
+        tags: normalize_tags(raw.tags),
     })
 }
 
@@ -265,7 +474,7 @@ async fn ai_suggestion(
         "messages": [
             {
                 "role": "system",
-                "content": "你是软件能力名称本地化助手。返回严格 JSON：{\"short_name\":\"推荐中文简称\",\"description_zh\":\"简洁中文用途\"}。简称优先 2-8 个汉字，可保留 AI、API、GitHub、PDF 等必要缩写；用途使用一到两句自然中文，不夸大原始能力，不加入原文没有的功能。"
+                "content": "你是软件能力名称本地化与分类助手。返回严格 JSON：{\"short_name\":\"推荐中文简称\",\"description_zh\":\"简洁中文用途\",\"category\":\"分类\",\"tags\":[\"标签1\",\"标签2\"]}。分类只能从：开发与代码、文档与内容、设计与多媒体、数据与自动化、法律与专业、沟通与协作、其他 中选择。标签给 2-4 个简短中文词。简称优先 2-8 个汉字，可保留 AI、API、GitHub、PDF 等必要缩写；用途使用一到两句自然中文，不夸大原始能力，不加入原文没有的功能。"
             },
             {
                 "role": "user",
@@ -306,6 +515,8 @@ async fn ai_suggestion(
     Ok(TranslationSuggestion {
         short_name: result.short_name,
         description_zh: result.description_zh,
+        category: result.category,
+        tags: result.tags,
         engine: "ai".to_string(),
         notice: None,
     })
@@ -358,51 +569,69 @@ pub async fn recommend_translation(
     description: String,
 ) -> Result<TranslationSuggestion, String> {
     let settings = read_settings(&settings_path(&app)?)?;
-    let key = match read_api_key() {
-        Ok(value) => value,
-        Err(error) => {
-            return Ok(local_suggestion(
-                &invocation,
-                &name,
-                &description,
-                Some(format!("{error}，已使用本地推荐。")),
-            ));
-        }
-    };
-    let Some(api_key) = key else {
-        return Ok(local_suggestion(
-            &invocation,
-            &name,
-            &description,
-            Some("尚未配置 API 密钥，已使用本地推荐。".to_string()),
-        ));
-    };
-    if settings.model.trim().is_empty() {
-        return Ok(local_suggestion(
-            &invocation,
-            &name,
-            &description,
-            Some("尚未配置模型名称，已使用本地推荐。".to_string()),
-        ));
-    }
-    match ai_suggestion(
-        &settings.endpoint,
-        &settings.model,
-        &api_key,
-        &invocation,
-        &name,
-        &description,
-    )
-    .await
-    {
-        Ok(result) => Ok(result),
-        Err(error) => Ok(local_suggestion(
+    let suggestion = match read_api_key() {
+        Err(error) => local_suggestion(
             &invocation,
             &name,
             &description,
             Some(format!("{error}，已使用本地推荐。")),
-        )),
+        ),
+        Ok(None) => local_suggestion(
+            &invocation,
+            &name,
+            &description,
+            Some("尚未配置 API 密钥，已使用本地推荐。".to_string()),
+        ),
+        Ok(Some(_)) if settings.model.trim().is_empty() => local_suggestion(
+            &invocation,
+            &name,
+            &description,
+            Some("尚未配置模型名称，已使用本地推荐。".to_string()),
+        ),
+        Ok(Some(api_key)) => match ai_suggestion(
+            &settings.endpoint,
+            &settings.model,
+            &api_key,
+            &invocation,
+            &name,
+            &description,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => local_suggestion(
+                &invocation,
+                &name,
+                &description,
+                Some(format!("{error}，已使用本地推荐。")),
+            ),
+        },
+    };
+    save_draft(&app, &invocation, &suggestion)?;
+    Ok(suggestion)
+}
+
+#[tauri::command]
+pub fn list_translation_drafts(app: tauri::AppHandle) -> Result<Vec<TranslationDraft>, String> {
+    let mut drafts: Vec<_> = read_drafts(&drafts_path(&app)?)?
+        .drafts
+        .into_values()
+        .collect();
+    drafts.sort_by(|a, b| b.generated_at.cmp(&a.generated_at));
+    Ok(drafts)
+}
+
+#[tauri::command]
+pub fn delete_translation_drafts(
+    app: tauri::AppHandle,
+    invocations: Vec<String>,
+) -> Result<(), String> {
+    let path = drafts_path(&app)?;
+    let mut store = read_drafts(&path)?;
+    for invocation in invocations {
+        store.drafts.remove(invocation.trim());
     }
+    write_drafts(&path, &store)
 }
 
 #[cfg(test)]
@@ -434,9 +663,10 @@ mod tests {
 
     #[test]
     fn parses_json_wrapped_in_markdown() {
-        let parsed = extract_suggestion("```json\n{\"short_name\":\"合同审查\",\"description_zh\":\"审阅合同并提示风险。\"}\n```").unwrap();
+        let parsed = extract_suggestion("```json\n{\"short_name\":\"合同审查\",\"description_zh\":\"审阅合同并提示风险。\",\"category\":\"法律与专业\",\"tags\":[\"合同\",\"审查\"]}\n```").unwrap();
         assert_eq!(parsed.short_name, "合同审查");
         assert_eq!(parsed.description_zh, "审阅合同并提示风险。");
+        assert_eq!(parsed.category, "法律与专业");
     }
 
     #[test]

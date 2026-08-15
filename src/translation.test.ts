@@ -11,6 +11,10 @@ const skill = (values: Partial<Skill>): Skill => ({
   source: "本地 Skill",
   sourcePath: "C:\\demo\\SKILL.md",
   favorite: false,
+  category: "",
+  tags: [],
+  usageCount: 0,
+  usageSources: {},
   ...values,
 });
 
@@ -19,6 +23,7 @@ describe("mockSuggestion", () => {
     const result = mockSuggestion(skill({ invocation: "github:gh-fix-ci", name: "gh-fix-ci" }));
     expect(result.shortName).toBe("GitHub修复CI");
     expect(result.engine).toBe("local");
+    expect(result.category).toBe("开发与代码");
   });
 
   it("keeps an existing Chinese description", () => {

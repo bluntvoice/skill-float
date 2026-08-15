@@ -7,6 +7,10 @@ export type Skill = {
   source: string;
   sourcePath: string;
   favorite: boolean;
+  category: string;
+  tags: string[];
+  usageCount: number;
+  usageSources: Record<string, number>;
 };
 
 export const titleFor = (skill: Skill) => skill.displayName || skill.name;
@@ -34,6 +38,8 @@ export const filterSkills = (skills: Skill[], query: string) => {
       skill.description,
       skill.localizedDescription,
       skill.source,
+      skill.category,
+      ...skill.tags,
     ]
       .join(" ")
       .toLocaleLowerCase("zh-CN");
@@ -58,6 +64,10 @@ export const MOCK_SKILLS: Skill[] = sortSkills([
     source: "本地 Skill",
     sourcePath: "C:\\Users\\demo\\.codex\\skills\\frontend-design\\SKILL.md",
     favorite: true,
+    category: "开发与代码",
+    tags: ["前端", "设计"],
+    usageCount: 18,
+    usageSources: { Codex: 11, "Skill Float": 7 },
   },
   {
     invocation: "github:gh-fix-ci",
@@ -68,6 +78,10 @@ export const MOCK_SKILLS: Skill[] = sortSkills([
     source: "插件 · github",
     sourcePath: "C:\\Users\\demo\\.codex\\plugins\\github\\SKILL.md",
     favorite: true,
+    category: "开发与代码",
+    tags: ["GitHub", "CI"],
+    usageCount: 12,
+    usageSources: { Codex: 9, "Claude Code": 3 },
   },
   {
     invocation: "legal-research",
@@ -78,6 +92,10 @@ export const MOCK_SKILLS: Skill[] = sortSkills([
     source: "本地 Skill",
     sourcePath: "C:\\Users\\demo\\.codex\\skills\\legal-research\\SKILL.md",
     favorite: false,
+    category: "法律与专业",
+    tags: ["法律", "研究"],
+    usageCount: 9,
+    usageSources: { Codex: 9 },
   },
   {
     invocation: "documents:documents",
@@ -88,5 +106,9 @@ export const MOCK_SKILLS: Skill[] = sortSkills([
     source: "插件 · documents",
     sourcePath: "C:\\Users\\demo\\.codex\\plugins\\documents\\SKILL.md",
     favorite: false,
+    category: "文档与内容",
+    tags: ["文档", "Word"],
+    usageCount: 6,
+    usageSources: { "Skill Float": 2, Codex: 4 },
   },
 ]);

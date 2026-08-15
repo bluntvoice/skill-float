@@ -1,4 +1,5 @@
 mod translation;
+mod usage;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -6,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager};
@@ -15,10 +16,17 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use walkdir::WalkDir;
 
 use translation::{get_translation_settings, recommend_translation, save_translation_settings};
+use usage::{get_usage_stats, refresh_usage_stats};
 
 const SHORTCUT_CANDIDATES: [&str; 3] = ["Alt+S", "Alt+Shift+S", "Ctrl+Alt+S"];
 
 struct FocusTarget(Mutex<isize>);
+struct WindowFocusData {
+    was_focused: bool,
+    suppress_until: Instant,
+}
+
+struct WindowFocusState(Mutex<WindowFocusData>);
 
 struct RuntimeState {
     shortcut: String,
@@ -26,11 +34,13 @@ struct RuntimeState {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 struct AliasEntry {
     display_name: String,
     localized_description: String,
     favorite: bool,
+    category: String,
+    tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -45,6 +55,8 @@ struct AliasUpdate {
     display_name: String,
     localized_description: String,
     favorite: bool,
+    category: String,
+    tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -58,6 +70,8 @@ struct SkillView {
     source: String,
     source_path: String,
     favorite: bool,
+    category: String,
+    tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -65,6 +79,7 @@ struct SkillView {
 struct PasteOutcome {
     inserted: bool,
     copied: bool,
+    usage_count: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -206,6 +221,8 @@ fn discover_skills() -> Result<Vec<SkillView>, String> {
             source,
             source_path: path.to_string_lossy().into_owned(),
             favorite: false,
+            category: String::new(),
+            tags: Vec::new(),
         };
         match discovered.get(&view.invocation) {
             Some((existing_depth, _)) if *existing_depth <= depth => {}
@@ -239,6 +256,8 @@ fn discover_skills() -> Result<Vec<SkillView>, String> {
             source: format!("插件 · {plugin}"),
             source_path: path.to_string_lossy().into_owned(),
             favorite: false,
+            category: String::new(),
+            tags: Vec::new(),
         };
         discovered.entry(invocation).or_insert((99, view));
     }
@@ -287,6 +306,20 @@ fn validate_alias_update(update: &AliasUpdate) -> Result<(), String> {
     if update.localized_description.trim().chars().count() > 500 {
         return Err(format!("{} 的中文用途不能超过 500 个字符", invocation));
     }
+    if update.category.trim().chars().count() > 40 {
+        return Err(format!("{} 的分类不能超过 40 个字符", invocation));
+    }
+    if update.tags.len() > 8
+        || update
+            .tags
+            .iter()
+            .any(|tag| tag.trim().is_empty() || tag.trim().chars().count() > 24)
+    {
+        return Err(format!(
+            "{} 最多保存 8 个标签，每个不超过 24 个字符",
+            invocation
+        ));
+    }
     Ok(())
 }
 
@@ -294,7 +327,20 @@ fn apply_alias_update(store: &mut AliasStore, update: &AliasUpdate) {
     let invocation = update.invocation.trim();
     let display_name = update.display_name.trim();
     let localized_description = update.localized_description.trim();
-    if display_name.is_empty() && localized_description.is_empty() && !update.favorite {
+    let category = update.category.trim();
+    let mut tags = Vec::new();
+    for tag in &update.tags {
+        let tag = tag.trim();
+        if !tag.is_empty() && !tags.iter().any(|existing| existing == tag) {
+            tags.push(tag.to_string());
+        }
+    }
+    if display_name.is_empty()
+        && localized_description.is_empty()
+        && !update.favorite
+        && category.is_empty()
+        && tags.is_empty()
+    {
         store.skills.remove(invocation);
     } else {
         store.skills.insert(
@@ -303,6 +349,8 @@ fn apply_alias_update(store: &mut AliasStore, update: &AliasUpdate) {
                 display_name: display_name.to_string(),
                 localized_description: localized_description.to_string(),
                 favorite: update.favorite,
+                category: category.to_string(),
+                tags,
             },
         );
     }
@@ -317,6 +365,8 @@ fn list_skills(app: tauri::AppHandle) -> Result<Vec<SkillView>, String> {
             skill.display_name = alias.display_name.clone();
             skill.localized_description = alias.localized_description.clone();
             skill.favorite = alias.favorite;
+            skill.category = alias.category.clone();
+            skill.tags = alias.tags.clone();
         }
     }
     skills.sort_by(|a, b| {
@@ -344,12 +394,16 @@ fn save_skill_alias(
     display_name: String,
     localized_description: String,
     favorite: bool,
+    category: String,
+    tags: Vec<String>,
 ) -> Result<(), String> {
     let update = AliasUpdate {
         invocation,
         display_name,
         localized_description,
         favorite,
+        category,
+        tags,
     };
     validate_alias_update(&update)?;
     let path = aliases_path(&app)?;
@@ -434,6 +488,12 @@ fn show_picker(app: &tauri::AppHandle, capture_focus: bool) {
             }
         }
     }
+    if let Some(state) = app.try_state::<WindowFocusState>() {
+        if let Ok(mut focus) = state.0.lock() {
+            focus.was_focused = false;
+            focus.suppress_until = Instant::now() + Duration::from_millis(500);
+        }
+    }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -490,9 +550,11 @@ fn paste_skill(
         show_picker(&app, false);
     }
 
+    let usage_count = usage::record_skill_usage(&app, &invocation)?;
     Ok(PasteOutcome {
         inserted,
         copied: true,
+        usage_count,
     })
 }
 
@@ -531,6 +593,15 @@ pub fn run() {
                 fallback_used: shortcut != SHORTCUT_CANDIDATES[0],
                 shortcut,
             });
+            app.manage(WindowFocusState(Mutex::new(WindowFocusData {
+                was_focused: false,
+                suppress_until: Instant::now(),
+            })));
+            app.manage(usage::initialize(app.handle()));
+            let usage_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = usage::refresh_usage_stats(usage_app).await;
+            });
 
             let open = MenuItem::with_id(app, "open", "打开 Skill Float", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
@@ -560,11 +631,24 @@ pub fn run() {
             tray.build(app)?;
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            tauri::WindowEvent::Focused(focused) => {
+                if let Some(state) = window.app_handle().try_state::<WindowFocusState>() {
+                    if let Ok(mut focus) = state.0.lock() {
+                        if *focused {
+                            focus.was_focused = true;
+                        } else if focus.was_focused && Instant::now() >= focus.suppress_until {
+                            focus.was_focused = false;
+                            let _ = window.minimize();
+                        }
+                    }
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             list_skills,
@@ -573,9 +657,13 @@ pub fn run() {
             get_translation_settings,
             save_translation_settings,
             recommend_translation,
+            translation::list_translation_drafts,
+            translation::delete_translation_drafts,
             paste_skill,
             hide_picker,
-            runtime_info
+            runtime_info,
+            get_usage_stats,
+            refresh_usage_stats
         ])
         .run(tauri::generate_context!())
         .expect("Skill Float 启动失败");

@@ -17,6 +17,7 @@ import {
   type AliasUpdate,
   type TranslationSettings,
   type TranslationSuggestion,
+  type TranslationDraft,
 } from "./translation";
 
 type CenterTab = "batch" | "settings";
@@ -26,6 +27,7 @@ type ReviewItem = {
   suggestion: TranslationSuggestion;
   applyName: boolean;
   applyDescription: boolean;
+  applyClassification: boolean;
 };
 
 type TranslationCenterProps = {
@@ -63,19 +65,42 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
   const dialogRef = useRef<HTMLElement>(null);
 
   const candidates = useMemo(
-    () => skills.filter((skill) => includeExisting || !skill.displayName || !skill.localizedDescription),
+    () => skills.filter((skill) => includeExisting || !skill.displayName || !skill.localizedDescription || !skill.category || skill.tags.length === 0),
     [includeExisting, skills],
   );
+  const pendingCandidates = useMemo(() => {
+    const drafted = new Set(reviews.map((item) => item.skill.invocation));
+    return candidates.filter((skill) => !drafted.has(skill.invocation));
+  }, [candidates, reviews]);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const loaded = isTauriRuntime()
-          ? await invoke<TranslationSettings>("get_translation_settings")
-          : DEFAULT_SETTINGS;
+        const [loaded, drafts] = isTauriRuntime()
+          ? await Promise.all([
+              invoke<TranslationSettings>("get_translation_settings"),
+              invoke<TranslationDraft[]>("list_translation_drafts"),
+            ])
+          : [DEFAULT_SETTINGS, [] as TranslationDraft[]];
         setSettings(loaded);
         setEndpoint(loaded.endpoint);
         setModel(loaded.model);
+        if (drafts.length) {
+          const byInvocation = new Map(skills.map((skill) => [skill.invocation, skill]));
+          const restored = drafts.flatMap((draft) => {
+            const skill = byInvocation.get(draft.invocation);
+            return skill ? [{
+              skill,
+              suggestion: draft.suggestion,
+              applyName: !skill.displayName,
+              applyDescription: !skill.localizedDescription,
+              applyClassification: !skill.category || skill.tags.length === 0,
+            }] : [];
+          });
+          setReviews(restored);
+          setProgress(0);
+          setNotice(`已自动恢复 ${restored.length} 项推荐草稿。`);
+        }
       } catch (loadError) {
         setError(`读取接口设置失败：${String(loadError)}`);
       }
@@ -93,17 +118,17 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
   };
 
   const generateBatch = async () => {
-    if (candidates.length === 0 || running) return;
+    if (pendingCandidates.length === 0 || running) return;
     setRunning(true);
-    setReviews([]);
     setProgress(0);
     setError("");
     setNotice("");
     stopRequested.current = false;
-    const next: ReviewItem[] = [];
-    for (let index = 0; index < candidates.length; index += 1) {
+    const targets = [...pendingCandidates];
+    const next: ReviewItem[] = [...reviews];
+    for (let index = 0; index < targets.length; index += 1) {
       if (stopRequested.current) break;
-      const skill = candidates[index];
+      const skill = targets[index];
       try {
         const suggestion = await requestSuggestion(skill);
         next.push({
@@ -111,6 +136,7 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
           suggestion,
           applyName: !skill.displayName,
           applyDescription: !skill.localizedDescription,
+          applyClassification: !skill.category || skill.tags.length === 0,
         });
         setReviews([...next]);
         setProgress(index + 1);
@@ -119,11 +145,11 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
         break;
       }
     }
-    if (stopRequested.current) setNotice(`已停止，保留前 ${next.length} 项预览。`);
+    if (stopRequested.current) setNotice(`已停止，当前共保留 ${next.length} 项预览。`);
     setRunning(false);
   };
 
-  const toggleReview = (index: number, field: "applyName" | "applyDescription") => {
+  const toggleReview = (index: number, field: "applyName" | "applyDescription" | "applyClassification") => {
     setReviews((current) =>
       current.map((item, itemIndex) =>
         itemIndex === index ? { ...item, [field]: !item[field] } : item,
@@ -131,21 +157,26 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
     );
   };
 
-  const selectedCount = reviews.filter((item) => item.applyName || item.applyDescription).length;
+  const selectedCount = reviews.filter((item) => item.applyName || item.applyDescription || item.applyClassification).length;
 
   const applyReviews = async () => {
-    const selected = reviews.filter((item) => item.applyName || item.applyDescription);
+    const selected = reviews.filter((item) => item.applyName || item.applyDescription || item.applyClassification);
     if (selected.length === 0) return;
-    const updates: AliasUpdate[] = selected.map(({ skill, suggestion, applyName, applyDescription }) => ({
+    const updates: AliasUpdate[] = selected.map(({ skill, suggestion, applyName, applyDescription, applyClassification }) => ({
       invocation: skill.invocation,
       displayName: applyName ? suggestion.shortName : skill.displayName,
       localizedDescription: applyDescription ? suggestion.descriptionZh : skill.localizedDescription,
       favorite: skill.favorite,
+      category: applyClassification ? suggestion.category : skill.category,
+      tags: applyClassification ? suggestion.tags : skill.tags,
     }));
     setApplying(true);
     setError("");
     try {
       await onApply(updates);
+      if (isTauriRuntime()) {
+        await invoke("delete_translation_drafts", { invocations: updates.map((update) => update.invocation) }).catch(() => undefined);
+      }
       setNotice(`已应用 ${updates.length} 项中文推荐。`);
       setReviews([]);
     } catch (applyError) {
@@ -250,27 +281,26 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
               <label className="check-control">
                 <input type="checkbox" checked={includeExisting} onChange={(event) => {
                   setIncludeExisting(event.target.checked);
-                  setReviews([]);
                   setProgress(0);
                 }} disabled={running} />
                 <span>包括已有汉化</span>
               </label>
-              <span className="candidate-count">待生成 {candidates.length} 项</span>
+              <span className="candidate-count">待生成 {pendingCandidates.length} 项</span>
               {running ? (
                 <button type="button" className="secondary-button compact-button" onClick={() => { stopRequested.current = true; }}>
                   <Square size={14} fill="currentColor" /> 停止
                 </button>
               ) : (
-                <button type="button" className="primary-button compact-button" onClick={() => void generateBatch()} disabled={candidates.length === 0} autoFocus>
-                  <Languages size={15} /> 生成预览
+                <button type="button" className="primary-button compact-button" onClick={() => void generateBatch()} disabled={pendingCandidates.length === 0} autoFocus>
+                  <Languages size={15} /> {reviews.length ? "继续生成" : "生成预览"}
                 </button>
               )}
             </div>
 
             {(running || progress > 0) && (
               <div className="batch-progress" aria-live="polite">
-                <div><span>生成进度</span><strong>{progress} / {candidates.length}</strong></div>
-                <progress value={progress} max={Math.max(candidates.length, 1)} />
+                <div><span>本次生成进度</span><strong>{progress} / {Math.max(progress + pendingCandidates.length, progress)}</strong></div>
+                <progress value={progress} max={Math.max(progress + pendingCandidates.length, 1)} />
               </div>
             )}
 
@@ -279,13 +309,13 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
                 <div className="review-empty">
                   {running ? <LoaderCircle className="spin" size={24} /> : <Languages size={24} />}
                   <strong>{running ? "正在生成第一项推荐…" : "还没有推荐预览"}</strong>
-                  <span>默认仅补全缺少中文名称或用途的 Skill。</span>
+                  <span>每项生成后会自动保存，关闭窗口后仍可恢复。</span>
                 </div>
               ) : reviews.map((item, index) => (
                 <article className="review-card" key={item.skill.invocation}>
                   <div className="review-title">
                     <div><strong>{item.skill.name}</strong><code>${item.skill.invocation}</code></div>
-                    <span className={`engine-badge ${item.suggestion.engine}`}>{item.suggestion.engine === "ai" ? "AI" : "本地"}</span>
+                    <div className="review-badges"><span className="draft-badge">已保存</span><span className={`engine-badge ${item.suggestion.engine}`}>{item.suggestion.engine === "ai" ? "AI" : "本地"}</span></div>
                   </div>
                   <label className="review-option">
                     <input type="checkbox" checked={item.applyName} onChange={() => toggleReview(index, "applyName")} />
@@ -295,6 +325,11 @@ export function TranslationCenter({ skills, onClose, onApply }: TranslationCente
                   <label className="review-option description-option">
                     <input type="checkbox" checked={item.applyDescription} onChange={() => toggleReview(index, "applyDescription")} />
                     <span><small>推荐用途</small><p>{item.suggestion.descriptionZh}</p></span>
+                  </label>
+                  <label className="review-option classification-option">
+                    <input type="checkbox" checked={item.applyClassification} onChange={() => toggleReview(index, "applyClassification")} />
+                    <span><small>推荐分类与标签</small><strong>{item.suggestion.category}</strong><p>{item.suggestion.tags.join(" · ")}</p></span>
+                    {item.skill.category && <em>当前：{item.skill.category}</em>}
                   </label>
                   {item.suggestion.notice && <div className="fallback-note">{item.suggestion.notice}</div>}
                 </article>
