@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 release/
+native/**/bin/
+native/**/obj/
 src-tauri/icons/android/
 src-tauri/icons/ios/
 

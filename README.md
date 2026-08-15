@@ -26,28 +26,22 @@ Skill Float 是一个面向 Windows 的轻量级 Skill 悬浮选择器。它会�
 - `%USERPROFILE%\.codex\skills`
 - `%USERPROFILE%\.codex\plugins\cache`
 
-中文别名、用途、分类、标签、推荐草稿、收藏状态和调用统计保存在应用自己的配置目录中，不会写回原始 Skill。调用统计会在本地读取 Codex、Claude Code 与 OpenClaw 可识别的 JSONL 历史文件，只保存 Skill 调用名、来源、文件增量位置与次数，不保存或上传对话正文。使用 AI 汉化时，只会向用户配置的接口发送 Skill 调用名、原始名称和原始说明；API 密钥保存在 Windows 凭据管理器中，不写入应用配置文件。未使用 AI 汉化时，应用不会上传数据。
+中文别名、用途、分类、标签、推荐草稿、收藏状态和调用统计统一保存在 `%LOCALAPPDATA%\SkillFloat\UserData`，不会写回原始 Skill。调用统计会在本地读取 Codex、Claude Code 与 OpenClaw 可识别的 JSONL 历史文件，只保存 Skill 调用名、来源、文件增量位置与次数，不保存或上传对话正文。使用 AI 汉化时，只会向用户配置的接口发送 Skill 调用名、原始名称和原始说明；API 密钥通过 Windows DPAPI 按当前用户加密保存。未使用 AI 汉化时，应用不会上传数据。
+
+从 0.2.x 升级时，安装器会先迁移旧配置和 Windows 凭据，再在原安装位置静默替换程序。以后更新或卸载均不会删除上述用户数据，因此 API 信息、汉化结果、分类、标签、收藏和调用统计可以持续保留。
 
 ## 开发
 
-需要 Node.js、Rust、Tauri 2 所需的 Windows 构建工具与 WebView2。
+原生版基于 C# WinForms 和 Windows 自带的 .NET Framework 4.8，不依赖 WebView2、Node.js 或额外的 .NET 运行时。请使用 PowerShell 7.6.4 或更新稳定版：
 
 ```powershell
-npm install
-npm test
-npm run tauri dev
+pwsh -File .\scripts\build-native.ps1
 ```
 
-生产构建：
-
-```powershell
-npm run tauri build
-```
-
-Windows 仅生成简体中文 NSIS `-setup.exe` 安装程序，默认按当前用户安装，无需管理员权限。
+脚本会编译、自检并生成简体中文 NSIS 安装程序 `release\Skill Float_0.3.0_x64-setup.exe`，默认按当前用户安装，无需管理员权限。0.2.x 的 Tauri 源码暂留在仓库中作为迁移参考，但不再参与生产构建。
 
 ## 技术栈
 
-- Tauri 2 / Rust
-- React 19 / TypeScript
-- Vite
+- C# / WinForms
+- .NET Framework 4.8（Windows 系统组件）
+- NSIS
