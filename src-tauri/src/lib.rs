@@ -1,3 +1,5 @@
+mod translation;
+
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -11,6 +13,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use walkdir::WalkDir;
+
+use translation::{get_translation_settings, recommend_translation, save_translation_settings};
 
 const SHORTCUT_CANDIDATES: [&str; 3] = ["Alt+S", "Alt+Shift+S", "Ctrl+Alt+S"];
 
@@ -32,6 +36,15 @@ struct AliasEntry {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct AliasStore {
     skills: BTreeMap<String, AliasEntry>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AliasUpdate {
+    invocation: String,
+    display_name: String,
+    localized_description: String,
+    favorite: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -263,6 +276,38 @@ fn write_aliases(path: &Path, store: &AliasStore) -> Result<(), String> {
     fs::write(path, format!("{content}\n")).map_err(|error| format!("保存别名配置失败：{error}"))
 }
 
+fn validate_alias_update(update: &AliasUpdate) -> Result<(), String> {
+    let invocation = update.invocation.trim();
+    if invocation.is_empty() || invocation.len() > 160 {
+        return Err("Skill 调用名无效".to_string());
+    }
+    if update.display_name.trim().chars().count() > 80 {
+        return Err(format!("{} 的中文名称不能超过 80 个字符", invocation));
+    }
+    if update.localized_description.trim().chars().count() > 500 {
+        return Err(format!("{} 的中文用途不能超过 500 个字符", invocation));
+    }
+    Ok(())
+}
+
+fn apply_alias_update(store: &mut AliasStore, update: &AliasUpdate) {
+    let invocation = update.invocation.trim();
+    let display_name = update.display_name.trim();
+    let localized_description = update.localized_description.trim();
+    if display_name.is_empty() && localized_description.is_empty() && !update.favorite {
+        store.skills.remove(invocation);
+    } else {
+        store.skills.insert(
+            invocation.to_string(),
+            AliasEntry {
+                display_name: display_name.to_string(),
+                localized_description: localized_description.to_string(),
+                favorite: update.favorite,
+            },
+        );
+    }
+}
+
 #[tauri::command]
 fn list_skills(app: tauri::AppHandle) -> Result<Vec<SkillView>, String> {
     let aliases = read_aliases(&aliases_path(&app)?)?;
@@ -300,32 +345,31 @@ fn save_skill_alias(
     localized_description: String,
     favorite: bool,
 ) -> Result<(), String> {
-    let invocation = invocation.trim();
-    let display_name = display_name.trim();
-    let localized_description = localized_description.trim();
-    if invocation.is_empty() || invocation.len() > 160 {
-        return Err("Skill 调用名无效".to_string());
-    }
-    if display_name.chars().count() > 80 {
-        return Err("中文名称不能超过 80 个字符".to_string());
-    }
-    if localized_description.chars().count() > 500 {
-        return Err("中文用途不能超过 500 个字符".to_string());
-    }
-
+    let update = AliasUpdate {
+        invocation,
+        display_name,
+        localized_description,
+        favorite,
+    };
+    validate_alias_update(&update)?;
     let path = aliases_path(&app)?;
     let mut store = read_aliases(&path)?;
-    if display_name.is_empty() && localized_description.is_empty() && !favorite {
-        store.skills.remove(invocation);
-    } else {
-        store.skills.insert(
-            invocation.to_string(),
-            AliasEntry {
-                display_name: display_name.to_string(),
-                localized_description: localized_description.to_string(),
-                favorite,
-            },
-        );
+    apply_alias_update(&mut store, &update);
+    write_aliases(&path, &store)
+}
+
+#[tauri::command]
+fn save_skill_aliases(app: tauri::AppHandle, updates: Vec<AliasUpdate>) -> Result<(), String> {
+    if updates.len() > 1000 {
+        return Err("一次最多保存 1000 项 Skill".to_string());
+    }
+    for update in &updates {
+        validate_alias_update(update)?;
+    }
+    let path = aliases_path(&app)?;
+    let mut store = read_aliases(&path)?;
+    for update in &updates {
+        apply_alias_update(&mut store, update);
     }
     write_aliases(&path, &store)
 }
@@ -525,6 +569,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_skills,
             save_skill_alias,
+            save_skill_aliases,
+            get_translation_settings,
+            save_translation_settings,
+            recommend_translation,
             paste_skill,
             hide_picker,
             runtime_info

@@ -4,12 +4,22 @@ import { listen } from "@tauri-apps/api/event";
 import {
   Check,
   Edit3,
+  Languages,
+  LoaderCircle,
   Search,
   Sparkles,
   Star,
+  WandSparkles,
   X,
 } from "lucide-react";
 import "./App.css";
+import { TranslationCenter } from "./TranslationCenter";
+import {
+  isTauriRuntime,
+  mockSuggestion,
+  type AliasUpdate,
+  type TranslationSuggestion,
+} from "./translation";
 import {
   MOCK_SKILLS,
   filterSkills,
@@ -31,16 +41,19 @@ type RuntimeInfo = {
   fallbackUsed: boolean;
 };
 
-const isTauri = () => "__TAURI_INTERNALS__" in window;
-
 function App() {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [editing, setEditing] = useState<Skill | null>(null);
+  const [translationOpen, setTranslationOpen] = useState(
+    () => import.meta.env.DEV && !isTauriRuntime() && new URLSearchParams(window.location.search).has("translation"),
+  );
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
+  const [suggestion, setSuggestion] = useState<TranslationSuggestion | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -52,7 +65,7 @@ function App() {
     setLoading(true);
     setError("");
     try {
-      const [result, runtime] = isTauri()
+      const [result, runtime] = isTauriRuntime()
         ? await Promise.all([
             invoke<Skill[]>("list_skills"),
             invoke<RuntimeInfo>("runtime_info"),
@@ -73,7 +86,7 @@ function App() {
 
   useEffect(() => {
     void loadSkills();
-    if (!isTauri()) return;
+    if (!isTauriRuntime()) return;
     const unlisten = listen("picker-shown", () => {
       setQuery("");
       setSelectedIndex(0);
@@ -100,7 +113,7 @@ function App() {
   }, [visibleSkills.length]);
 
   const hide = useCallback(async () => {
-    if (isTauri()) {
+    if (isTauriRuntime()) {
       await invoke("hide_picker");
     }
   }, []);
@@ -110,7 +123,7 @@ function App() {
     setBusy(true);
     setNotice("");
     try {
-      if (!isTauri()) {
+      if (!isTauriRuntime()) {
         setNotice(`预览模式：将插入 $${skill.invocation}`);
         return;
       }
@@ -129,7 +142,7 @@ function App() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (editing) return;
+      if (editing || translationOpen) return;
       if (event.key === "Escape") {
         event.preventDefault();
         void hide();
@@ -150,7 +163,7 @@ function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [editing, hide, runSkill, selectedIndex, visibleSkills]);
+  }, [editing, hide, runSkill, selectedIndex, translationOpen, visibleSkills]);
 
   useEffect(() => {
     document
@@ -162,6 +175,8 @@ function App() {
     setEditing(skill);
     setDraftName(skill.displayName);
     setDraftDescription(skill.localizedDescription);
+    setSuggestion(null);
+    setSuggesting(false);
     setError("");
   };
 
@@ -171,7 +186,7 @@ function App() {
     localizedDescription: string,
     favorite: boolean,
   ) => {
-    if (isTauri()) {
+    if (isTauriRuntime()) {
       await invoke("save_skill_alias", {
         invocation: skill.invocation,
         displayName,
@@ -193,6 +208,42 @@ function App() {
         ),
       ),
     );
+  };
+
+  const applyBatchAliases = async (updates: AliasUpdate[]) => {
+    if (isTauriRuntime()) {
+      await invoke("save_skill_aliases", { updates });
+    }
+    const byInvocation = new Map(updates.map((update) => [update.invocation, update]));
+    setSkills((current) =>
+      sortSkills(
+        current.map((skill) => {
+          const update = byInvocation.get(skill.invocation);
+          return update ? { ...skill, ...update } : skill;
+        }),
+      ),
+    );
+  };
+
+  const recommendForEditor = async () => {
+    if (!editing || suggesting) return;
+    setSuggesting(true);
+    setSuggestion(null);
+    setError("");
+    try {
+      const result = isTauriRuntime()
+        ? await invoke<TranslationSuggestion>("recommend_translation", {
+            invocation: editing.invocation,
+            name: editing.name,
+            description: editing.description,
+          })
+        : mockSuggestion(editing);
+      setSuggestion(result);
+    } catch (suggestionError) {
+      setError(`生成中文推荐失败：${String(suggestionError)}`);
+    } finally {
+      setSuggesting(false);
+    }
   };
 
   const toggleFavorite = async (skill: Skill) => {
@@ -266,12 +317,17 @@ function App() {
           )}
           <kbd>{shortcut.replace(/\+/g, " ")}</kbd>
         </label>
-        <div className="filter-tabs" role="group" aria-label="显示范围">
-          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
-            全部 <span>{skills.length}</span>
-          </button>
-          <button className={filter === "favorites" ? "active" : ""} onClick={() => setFilter("favorites")}>
-            收藏 <span>{skills.filter((skill) => skill.favorite).length}</span>
+        <div className="toolbar-lower">
+          <div className="filter-tabs" role="group" aria-label="显示范围">
+            <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+              全部 <span>{skills.length}</span>
+            </button>
+            <button className={filter === "favorites" ? "active" : ""} onClick={() => setFilter("favorites")}>
+              收藏 <span>{skills.filter((skill) => skill.favorite).length}</span>
+            </button>
+          </div>
+          <button className="translation-center-button" onClick={() => { setTranslationOpen(true); setError(""); }}>
+            <Languages size={15} /> AI 汉化
           </button>
         </div>
       </section>
@@ -389,6 +445,26 @@ function App() {
                 <X size={18} />
               </button>
             </div>
+            <button type="button" className="recommend-button" onClick={() => void recommendForEditor()} disabled={suggesting}>
+              {suggesting ? <LoaderCircle className="spin" size={16} /> : <WandSparkles size={16} />}
+              {suggesting ? "正在生成推荐…" : "生成中文简称与用途推荐"}
+            </button>
+            {suggestion && (
+              <div className="single-suggestion">
+                <div className="suggestion-heading">
+                  <span>推荐结果</span>
+                  <span className={`engine-badge ${suggestion.engine}`}>{suggestion.engine === "ai" ? "AI" : "本地"}</span>
+                </div>
+                <strong>{suggestion.shortName}</strong>
+                <p>{suggestion.descriptionZh}</p>
+                {suggestion.notice && <div className="fallback-note">{suggestion.notice}</div>}
+                <div className="suggestion-actions">
+                  <button type="button" onClick={() => setDraftName(suggestion.shortName)}>采用简称</button>
+                  <button type="button" onClick={() => setDraftDescription(suggestion.descriptionZh)}>采用用途</button>
+                  <button type="button" onClick={() => { setDraftName(suggestion.shortName); setDraftDescription(suggestion.descriptionZh); }}>全部采用</button>
+                </div>
+              </div>
+            )}
             <label htmlFor="alias-name">中文名称</label>
             <input
               id="alias-name"
@@ -420,6 +496,20 @@ function App() {
             </div>
           </form>
         </div>
+      )}
+
+      {translationOpen && (
+        <TranslationCenter
+          skills={skills}
+          onClose={() => {
+            setTranslationOpen(false);
+            requestAnimationFrame(() => searchRef.current?.focus());
+          }}
+          onApply={async (updates) => {
+            await applyBatchAliases(updates);
+            setNotice(`已应用 ${updates.length} 项中文推荐`);
+          }}
+        />
       )}
     </main>
   );
