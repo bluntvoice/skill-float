@@ -7,6 +7,7 @@ import {
   Edit3,
   Languages,
   LoaderCircle,
+  Minus,
   Search,
   Sparkles,
   Star,
@@ -290,6 +291,16 @@ function App() {
     });
   };
 
+  const minimizeWindow = () => {
+    if (!isTauriRuntime()) {
+      setNotice("预览模式：最小化窗口");
+      return;
+    }
+    void getCurrentWindow().minimize().catch((minimizeError) => {
+      setError(`最小化悬浮窗失败：${String(minimizeError)}`);
+    });
+  };
+
   return (
     <main className="app-shell">
       <header className="titlebar" onMouseDown={startWindowDrag}>
@@ -300,9 +311,14 @@ function App() {
             <span>轻按一下，调用所需能力</span>
           </div>
         </div>
-        <button className="icon-button close-button" onClick={() => void hide()} aria-label="隐藏悬浮窗" title="隐藏">
-          <X size={18} strokeWidth={1.8} />
-        </button>
+        <div className="titlebar-actions">
+          <button className="icon-button minimize-button" onClick={minimizeWindow} aria-label="最小化悬浮窗" title="最小化">
+            <Minus size={18} strokeWidth={1.8} />
+          </button>
+          <button className="icon-button close-button" onClick={() => void hide()} aria-label="隐藏悬浮窗" title="隐藏">
+            <X size={18} strokeWidth={1.8} />
+          </button>
+        </div>
       </header>
 
       <section className="toolbar" aria-label="Skill 筛选">
