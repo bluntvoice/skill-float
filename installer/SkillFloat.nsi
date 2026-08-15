@@ -8,25 +8,25 @@ SetCompressorDictSize 32
 !include "x64.nsh"
 
 !define PRODUCT_NAME "Skill Float"
-!define PRODUCT_VERSION "0.3.0"
+!define PRODUCT_VERSION "0.3.1"
 !define PRODUCT_PUBLISHER "bluntvoice"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Skill Float"
 !define APP_EXE "SkillFloat.exe"
 
 Name "${PRODUCT_NAME}"
-OutFile "..\release\Skill Float_0.3.0_x64-setup.exe"
+OutFile "..\release\Skill Float_0.3.1_x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\Skill Float"
 InstallDirRegKey HKCU "${UNINSTALL_KEY}" "InstallLocation"
 Icon "..\src-tauri\icons\icon.ico"
 UninstallIcon "..\src-tauri\icons\icon.ico"
 BrandingText "Skill Float · 轻量原生版"
 ManifestDPIAware true
-VIProductVersion "0.3.0.0"
+VIProductVersion "0.3.1.0"
 VIAddVersionKey /LANG=2052 "ProductName" "Skill Float"
 VIAddVersionKey /LANG=2052 "CompanyName" "bluntvoice"
 VIAddVersionKey /LANG=2052 "FileDescription" "Skill Float 中文安装程序"
-VIAddVersionKey /LANG=2052 "FileVersion" "0.3.0"
-VIAddVersionKey /LANG=2052 "ProductVersion" "0.3.0"
+VIAddVersionKey /LANG=2052 "FileVersion" "0.3.1"
+VIAddVersionKey /LANG=2052 "ProductVersion" "0.3.1"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright 2026 bluntvoice"
 
 !define MUI_ABORTWARNING

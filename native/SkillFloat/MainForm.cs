@@ -16,6 +16,7 @@ namespace SkillFloat
         private readonly AiService _ai = new AiService();
         private readonly ListBox _list = new ListBox();
         private readonly TextBox _search = new TextBox();
+        private readonly ComboBox _categoryFilter = new ComboBox();
         private readonly Label _status = Theme.Label("正在读取 Skill…", Theme.Small, Theme.Muted);
         private readonly Label _count = Theme.Label("0 项", Theme.Small, Theme.Muted);
         private readonly Button _allButton = Theme.Button("全部");
@@ -36,6 +37,14 @@ namespace SkillFloat
         private bool _allowExit;
         private int _modalDepth;
         private string _shortcut = "Alt+S";
+        private bool _updatingCategories;
+
+        private sealed class CategoryFilterItem
+        {
+            public string Value { get; set; }
+            public string Label { get; set; }
+            public override string ToString() => Label;
+        }
 
         public MainForm()
         {
@@ -186,9 +195,23 @@ namespace SkillFloat
             var filterRow = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Theme.Surface, Padding = new Padding(0, 4, 0, 0) };
             _allButton.Width = 74;
             _favoriteFilterButton.Width = 74;
-            _allButton.Click += (_, __) => { _favoritesOnly = false; ApplyFilter(); };
+            _allButton.Click += (_, __) =>
+            {
+                _favoritesOnly = false;
+                if (_categoryFilter.Items.Count > 0) _categoryFilter.SelectedIndex = 0;
+                ApplyFilter();
+            };
             _favoriteFilterButton.Click += (_, __) => { _favoritesOnly = true; ApplyFilter(); };
-            filterRow.Controls.AddRange(new Control[] { _allButton, _favoriteFilterButton });
+            _categoryFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+            _categoryFilter.Width = 230;
+            _categoryFilter.Height = 28;
+            _categoryFilter.Font = Theme.Small;
+            _categoryFilter.AccessibleName = "按分类筛选 Skill";
+            _categoryFilter.Margin = new Padding(10, 1, 0, 0);
+            _categoryFilter.SelectedIndexChanged += (_, __) => { if (!_updatingCategories) ApplyFilter(); };
+            var categoryLabel = Theme.Label("分类", Theme.Small, Theme.Secondary);
+            categoryLabel.Margin = new Padding(14, 7, 0, 0);
+            filterRow.Controls.AddRange(new Control[] { _allButton, _favoriteFilterButton, categoryLabel, _categoryFilter });
             toolbar.Controls.Add(_search);
             toolbar.Controls.Add(filterRow);
             shell.Controls.Add(toolbar, 0, 1);
@@ -250,6 +273,7 @@ namespace SkillFloat
             _skills = SkillDiscovery.Discover(_aliases);
             _usage = UsageScanner.Current(_skills);
             ApplyUsage();
+            RefreshCategoryFilter();
             ApplyFilter();
             SetStatus("已读取 " + _skills.Count + " 个 Skill · 唤出快捷键 " + _shortcut);
         }
@@ -268,7 +292,16 @@ namespace SkillFloat
         private void ApplyFilter()
         {
             var terms = _search.Text.Trim().ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            _visible = _skills.Where(skill => (!_favoritesOnly || skill.Favorite) && terms.All(term => SearchText(skill).Contains(term))).OrderByDescending(skill => skill.Favorite).ThenBy(skill => skill.VisibleName, StringComparer.CurrentCultureIgnoreCase).ToList();
+            var selectedCategory = (_categoryFilter.SelectedItem as CategoryFilterItem)?.Value ?? "";
+            _visible = _skills.Where(skill =>
+                (!_favoritesOnly || skill.Favorite)
+                && (selectedCategory.Length == 0
+                    || (selectedCategory == "未分类" && string.IsNullOrWhiteSpace(skill.Category))
+                    || string.Equals(skill.Category, selectedCategory, StringComparison.CurrentCultureIgnoreCase))
+                && terms.All(term => SearchText(skill).Contains(term)))
+                .OrderByDescending(skill => skill.Favorite)
+                .ThenBy(skill => skill.VisibleName, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
             _list.BeginUpdate();
             _list.Items.Clear();
             foreach (var skill in _visible) _list.Items.Add(skill);
@@ -278,6 +311,37 @@ namespace SkillFloat
             _allButton.BackColor = _favoritesOnly ? Theme.Raised : Theme.PrimarySoft;
             _favoriteFilterButton.BackColor = _favoritesOnly ? Theme.PrimarySoft : Theme.Raised;
             UpdateActionState();
+        }
+
+        private void RefreshCategoryFilter()
+        {
+            var previous = (_categoryFilter.SelectedItem as CategoryFilterItem)?.Value ?? "";
+            var groups = _skills.GroupBy(skill => string.IsNullOrWhiteSpace(skill.Category) ? "未分类" : skill.Category)
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.CurrentCultureIgnoreCase);
+            var order = new[] { "开发与代码", "文档与内容", "设计与多媒体", "数据与自动化", "法律与专业", "沟通与协作", "其他", "未分类" };
+            _updatingCategories = true;
+            try
+            {
+                _categoryFilter.Items.Clear();
+                _categoryFilter.Items.Add(new CategoryFilterItem { Value = "", Label = "全部分类（" + _skills.Count + "）" });
+                foreach (var category in order)
+                {
+                    int count;
+                    if (!groups.TryGetValue(category, out count)) continue;
+                    _categoryFilter.Items.Add(new CategoryFilterItem { Value = category, Label = category + "（" + count + "）" });
+                }
+                foreach (var pair in groups.Where(pair => !order.Contains(pair.Key)).OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase))
+                    _categoryFilter.Items.Add(new CategoryFilterItem { Value = pair.Key, Label = pair.Key + "（" + pair.Value + "）" });
+                _categoryFilter.SelectedIndex = 0;
+                for (var index = 0; index < _categoryFilter.Items.Count; index++)
+                {
+                    var item = (CategoryFilterItem)_categoryFilter.Items[index];
+                    if (!item.Value.Equals(previous, StringComparison.CurrentCultureIgnoreCase)) continue;
+                    _categoryFilter.SelectedIndex = index;
+                    break;
+                }
+            }
+            finally { _updatingCategories = false; }
         }
 
         private static string SearchText(SkillItem skill) => string.Join(" ", new[] { skill.Invocation, skill.Name, skill.DisplayName, skill.Description, skill.LocalizedDescription, skill.Source, skill.Category, string.Join(" ", skill.Tags) }).ToLowerInvariant();
@@ -387,6 +451,7 @@ namespace SkillFloat
                     skill.Category = entry.category ?? "";
                     skill.Tags = entry.tags ?? new List<string>();
                 }
+                RefreshCategoryFilter();
                 ApplyFilter();
             });
         }
@@ -472,6 +537,8 @@ namespace SkillFloat
                 }
             }
             SetStatus("AI 已自动分类 " + completed + " 个 Skill");
+            RefreshCategoryFilter();
+            ApplyFilter();
             TrimWorkingSet();
         }
 

@@ -43,6 +43,79 @@ namespace SkillFloat
 
         public Task<TranslationSuggestion> ClassifyAsync(SkillItem skill, CancellationToken token) => RequestAsync(skill, false, token);
 
+        public async Task<Dictionary<string, TranslationSuggestion>> RecommendBatchAsync(IEnumerable<SkillItem> source, CancellationToken token)
+        {
+            var skills = source.Take(10).ToList();
+            var results = new Dictionary<string, TranslationSuggestion>(StringComparer.OrdinalIgnoreCase);
+            if (skills.Count == 0) return results;
+            var settings = Storage.LoadSettings();
+            var key = Storage.LoadApiKey();
+            if (string.IsNullOrWhiteSpace(settings.model) || string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("尚未配置 AI 接口、模型或 API 密钥");
+            var payload = new Dictionary<string, object>
+            {
+                ["model"] = settings.model,
+                ["temperature"] = 0.15,
+                ["messages"] = new object[]
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "system",
+                        ["content"] = "你是软件能力名称本地化与分类助手。只返回严格 JSON：{\"items\":[{\"invocation\":\"原调用名\",\"short_name\":\"中文简称\",\"description_zh\":\"简洁中文用途\",\"category\":\"分类\",\"tags\":[\"标签1\",\"标签2\"]}]}。必须逐项保留输入 invocation；分类只能从开发与代码、文档与内容、设计与多媒体、数据与自动化、法律与专业、沟通与协作、其他中选择；每项给2-4个简短标签；不要增加原始说明没有的能力；不要输出解释。"
+                    },
+                    new Dictionary<string, object>
+                    {
+                        ["role"] = "user",
+                        ["content"] = Json.Serialize(skills.Select(skill => new Dictionary<string, object>
+                        {
+                            ["invocation"] = Limit(skill.Invocation, 160),
+                            ["name"] = Limit(skill.Name, 160),
+                            ["description"] = Limit(skill.Description, 1200)
+                        }).ToArray())
+                    }
+                }
+            };
+            using (var request = new HttpRequestMessage(HttpMethod.Post, BuildEndpoint(settings.endpoint)))
+            {
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+                request.Content = new StringContent(Json.Serialize(payload), Encoding.UTF8, "application/json");
+                using (var response = await Client.SendAsync(request, token).ConfigureAwait(false))
+                {
+                    var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode) throw new InvalidOperationException("AI 接口返回 " + (int)response.StatusCode);
+                    var root = Json.DeserializeObject(body) as Dictionary<string, object>;
+                    var parsed = ExtractJson(ExtractContent(root));
+                    object itemsObject;
+                    if (!parsed.TryGetValue("items", out itemsObject)) throw new InvalidOperationException("AI 未返回批量汉化结果");
+                    foreach (var itemObject in AsObjects(itemsObject))
+                    {
+                        var item = itemObject as Dictionary<string, object>;
+                        var invocation = Clean(GetString(item, "invocation"), 180).TrimStart('$');
+                        var matched = skills.FirstOrDefault(skill => skill.Invocation.Equals(invocation, StringComparison.OrdinalIgnoreCase));
+                        if (matched == null) continue;
+                        var suggestion = new TranslationSuggestion
+                        {
+                            shortName = Clean(GetString(item, "short_name"), 24),
+                            descriptionZh = Clean(GetString(item, "description_zh"), 300),
+                            category = NormalizeCategory(GetString(item, "category")),
+                            tags = NormalizeTags(GetArray(item, "tags")),
+                            engine = "ai"
+                        };
+                        if (suggestion.shortName.Length == 0 || suggestion.descriptionZh.Length == 0) continue;
+                        if (suggestion.tags.Count == 0) suggestion.tags.Add("通用");
+                        results[matched.Invocation] = suggestion;
+                    }
+                }
+            }
+            if (results.Count == 0) throw new InvalidOperationException("AI 未返回可用的批量汉化结果");
+            var drafts = Storage.LoadDrafts();
+            if (drafts.drafts == null) drafts.drafts = new Dictionary<string, TranslationDraft>(StringComparer.OrdinalIgnoreCase);
+            var generatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            foreach (var pair in results)
+                drafts.drafts[pair.Key] = new TranslationDraft { invocation = pair.Key, suggestion = pair.Value, generatedAt = generatedAt };
+            Storage.SaveDrafts(drafts);
+            return results;
+        }
+
         public async Task<Dictionary<string, TranslationSuggestion>> ClassifyBatchAsync(IEnumerable<SkillItem> source, CancellationToken token)
         {
             var skills = source.Take(20).ToList();
