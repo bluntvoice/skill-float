@@ -56,6 +56,7 @@ namespace SkillFloat
             MinimumSize = new Size(780, 650);
             FormBorderStyle = FormBorderStyle.SizableToolWindow;
             ShowInTaskbar = Program.QaMode;
+            Theme.ConstrainToWorkingArea(this);
             BuildInterface();
             LoadSettings();
             RestoreBatchSelection();

@@ -40,5 +40,5 @@ if (-not $SkipInstaller) {
 
 Write-Output "构建完成：$exe"
 if (-not $SkipInstaller) {
-    Write-Output (Join-Path $repoRoot 'release\Skill Float_0.3.1_x64-setup.exe')
+    Write-Output (Join-Path $repoRoot 'release\Skill Float_0.3.2_x64-setup.exe')
 }

@@ -30,17 +30,30 @@ namespace SkillFloat
             MaximizeBox = false;
             MinimizeBox = false;
             ShowInTaskbar = false;
+            Theme.ConstrainToWorkingArea(this);
             BuildInterface();
             RestoreDraft();
         }
 
         private void BuildInterface()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 1, RowCount = 14, BackColor = Theme.Surface, AutoScroll = true };
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            Controls.Add(root);
+            var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, BackColor = Theme.Surface };
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(shell);
+
+            var scroller = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(20, 20, 20, 8), BackColor = Theme.Surface };
+            var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, BackColor = Theme.Surface };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            scroller.Controls.Add(root);
+            shell.Controls.Add(scroller, 0, 0);
+
             var heading = Theme.Label("汉化与重命名", Theme.Heading, Theme.Text);
             var invocation = Theme.Label("$" + _skill.Invocation, Theme.Mono, Theme.Muted);
+            invocation.AutoSize = false;
+            invocation.Height = 24;
+            invocation.Dock = DockStyle.Top;
+            invocation.AutoEllipsis = true;
             root.Controls.Add(heading);
             root.Controls.Add(invocation);
             _recommend.Height = 38;
@@ -90,7 +103,7 @@ namespace SkillFloat
             original.BackColor = Theme.Soft;
             root.Controls.Add(original);
 
-            var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 50, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0), BackColor = Theme.Surface };
+            var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(20, 10, 20, 8), BackColor = Theme.Surface, WrapContents = false };
             var save = Theme.Button("保存显示信息", true);
             save.Width = 132;
             save.DialogResult = DialogResult.OK;
@@ -100,7 +113,7 @@ namespace SkillFloat
             cancel.DialogResult = DialogResult.Cancel;
             actions.Controls.Add(save);
             actions.Controls.Add(cancel);
-            root.Controls.Add(actions);
+            shell.Controls.Add(actions, 0, 1);
             AcceptButton = save;
             CancelButton = cancel;
         }

@@ -12,6 +12,7 @@ namespace SkillFloat
         public string LocalizedDescription { get; set; } = "";
         public string Source { get; set; } = "";
         public string SourcePath { get; set; } = "";
+        public bool Hidden { get; set; }
         public bool Favorite { get; set; }
         public string Category { get; set; } = "";
         public List<string> Tags { get; set; } = new List<string>();
@@ -33,6 +34,11 @@ namespace SkillFloat
     internal sealed class AliasStore
     {
         public Dictionary<string, AliasEntry> skills { get; set; } = new Dictionary<string, AliasEntry>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal sealed class HiddenSkillStore
+    {
+        public List<string> skills { get; set; } = new List<string>();
     }
 
     internal sealed class TranslationSettings

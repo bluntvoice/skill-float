@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -67,6 +68,44 @@ namespace SkillFloat
             form.ForeColor = Text;
             form.BackColor = Surface;
             form.StartPosition = FormStartPosition.CenterParent;
+        }
+
+        public static void ConstrainToWorkingArea(Form form, int margin = 12)
+        {
+            var baselineMinimum = form.MinimumSize;
+            Action fit = () => FitToWorkingArea(form, baselineMinimum, margin);
+            form.Load += (_, __) => fit();
+            form.ResizeEnd += (_, __) => fit();
+            form.DpiChanged += (_, __) =>
+            {
+                if (!form.IsDisposed && form.IsHandleCreated) form.BeginInvoke(fit);
+            };
+        }
+
+        private static void FitToWorkingArea(Form form, Size baselineMinimum, int margin)
+        {
+            var screen = form.Owner != null && form.Owner.Visible
+                ? Screen.FromControl(form.Owner)
+                : Screen.FromControl(form);
+            var area = screen.WorkingArea;
+            var maxWidth = Math.Max(320, area.Width - margin * 2);
+            var maxHeight = Math.Max(280, area.Height - margin * 2);
+            var width = Math.Min(form.Width, maxWidth);
+            var height = Math.Min(form.Height, maxHeight);
+            var minimumWidth = Math.Min(baselineMinimum.Width, maxWidth);
+            var minimumHeight = Math.Min(baselineMinimum.Height, maxHeight);
+            width = Math.Max(width, minimumWidth);
+            height = Math.Max(height, minimumHeight);
+            var centerX = form.Left + form.Width / 2;
+            var centerY = form.Top + form.Height / 2;
+            var left = Math.Max(area.Left + margin, Math.Min(centerX - width / 2, area.Right - margin - width));
+            var top = Math.Max(area.Top + margin, Math.Min(centerY - height / 2, area.Bottom - margin - height));
+
+            form.MinimumSize = Size.Empty;
+            form.MaximumSize = Size.Empty;
+            form.Bounds = new Rectangle(left, top, width, height);
+            form.MaximumSize = new Size(maxWidth, maxHeight);
+            form.MinimumSize = new Size(minimumWidth, minimumHeight);
         }
     }
 }

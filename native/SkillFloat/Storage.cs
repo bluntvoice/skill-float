@@ -18,6 +18,7 @@ namespace SkillFloat
         public static string SettingsPath => Path.Combine(Root, "translation-settings.json");
         public static string DraftsPath => Path.Combine(Root, "translation-drafts.json");
         public static string UsagePath => Path.Combine(Root, "usage-stats.json");
+        public static string HiddenSkillsPath => Path.Combine(Root, "hidden-skills.json");
         private static string ApiKeyPath => Path.Combine(Root, "api-key.bin");
 
         public static void MigrateLegacyData()
@@ -68,6 +69,13 @@ namespace SkillFloat
         }
 
         public static void SaveAliases(AliasStore value) => Write(AliasesPath, value);
+        public static HiddenSkillStore LoadHiddenSkills()
+        {
+            var store = Read(HiddenSkillsPath, () => new HiddenSkillStore());
+            if (store.skills == null) store.skills = new List<string>();
+            return store;
+        }
+        public static void SaveHiddenSkills(HiddenSkillStore value) => Write(HiddenSkillsPath, value);
         public static TranslationSettings LoadSettings() => Read(SettingsPath, () => new TranslationSettings());
         public static void SaveSettings(TranslationSettings value) => Write(SettingsPath, value);
         public static TranslationDraftStore LoadDrafts() => Read(DraftsPath, () => new TranslationDraftStore());

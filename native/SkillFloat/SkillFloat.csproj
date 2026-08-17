@@ -25,6 +25,7 @@
     <Reference Include="System.Security" />
     <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="Microsoft.VisualBasic" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
@@ -32,6 +33,7 @@
     <Compile Include="Storage.cs" />
     <Compile Include="NativeMethods.cs" />
     <Compile Include="SkillDiscovery.cs" />
+    <Compile Include="SkillFileManager.cs" />
     <Compile Include="UsageScanner.cs" />
     <Compile Include="AiService.cs" />
     <Compile Include="Theme.cs" />

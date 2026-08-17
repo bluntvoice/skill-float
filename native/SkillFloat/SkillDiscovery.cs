@@ -14,6 +14,7 @@ namespace SkillFloat
             var localRoot = Path.Combine(home, ".codex", "skills");
             var pluginRoot = Path.Combine(home, ".codex", "plugins", "cache");
             var found = new Dictionary<string, Tuple<int, SkillItem>>(StringComparer.OrdinalIgnoreCase);
+            var hidden = new HashSet<string>(Storage.LoadHiddenSkills().skills, StringComparer.OrdinalIgnoreCase);
 
             Collect(localRoot, path =>
             {
@@ -38,6 +39,7 @@ namespace SkillFloat
             var result = found.Values.Select(value => value.Item2).ToList();
             foreach (var skill in result)
             {
+                skill.Hidden = hidden.Contains(skill.Invocation);
                 AliasEntry entry;
                 if (!aliases.skills.TryGetValue(skill.Invocation, out entry) || entry == null) continue;
                 skill.DisplayName = entry.displayName ?? "";

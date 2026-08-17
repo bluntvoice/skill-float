@@ -59,6 +59,12 @@ namespace SkillFloat
                 if (usage.Total < 0 || usage.Sources.Count != 4) return 12;
                 var current = Process.GetCurrentProcess();
                 if (current.PrivateMemorySize64 <= 0) return 13;
+                var local = skills.FirstOrDefault(skill => skill.Source.Equals("本地 Skill", StringComparison.OrdinalIgnoreCase));
+                string directory, reason;
+                int containedSkills;
+                if (local != null && !SkillFileManager.TryGetDeletableDirectory(local, out directory, out containedSkills, out reason)) return 14;
+                var protectedSkill = skills.FirstOrDefault(skill => !skill.Source.Equals("本地 Skill", StringComparison.OrdinalIgnoreCase));
+                if (protectedSkill != null && SkillFileManager.TryGetDeletableDirectory(protectedSkill, out directory, out containedSkills, out reason)) return 15;
                 return 0;
             }
             catch { return 10; }

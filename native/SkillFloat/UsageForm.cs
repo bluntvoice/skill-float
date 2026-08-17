@@ -29,6 +29,7 @@ namespace SkillFloat
             MinimumSize = new Size(560, 520);
             FormBorderStyle = FormBorderStyle.SizableToolWindow;
             ShowInTaskbar = false;
+            Theme.ConstrainToWorkingArea(this);
             BuildInterface();
             Render();
         }
@@ -49,6 +50,10 @@ namespace SkillFloat
             _used.Margin = new Padding(12, 25, 0, 0);
             metric.Controls.Add(_used);
             root.Controls.Add(metric);
+            _source.AutoSize = false;
+            _source.Dock = DockStyle.Fill;
+            _source.Height = 42;
+            _source.TextAlign = ContentAlignment.MiddleLeft;
             _source.Margin = new Padding(0, 0, 0, 8);
             root.Controls.Add(_source);
 
@@ -59,13 +64,14 @@ namespace SkillFloat
             _list.BorderStyle = BorderStyle.FixedSingle;
             _list.HeaderStyle = ColumnHeaderStyle.Nonclickable;
             _list.Font = Theme.Body;
-            _list.Columns.Add("Skill", 240);
-            _list.Columns.Add("分类", 120);
-            _list.Columns.Add("调用次数", 100, HorizontalAlignment.Right);
+            _list.ShowItemToolTips = true;
+            _list.Columns.Add("Skill", 210);
+            _list.Columns.Add("分类", 105);
+            _list.Columns.Add("调用次数", 90, HorizontalAlignment.Right);
             _list.Columns.Add("来源", 110);
             root.Controls.Add(_list);
 
-            var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0) };
+            var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, Height = 46, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(0, 8, 0, 0) };
             var close = Theme.Button("完成");
             close.Width = 78;
             close.DialogResult = DialogResult.OK;
@@ -107,6 +113,7 @@ namespace SkillFloat
                     ? "—"
                     : string.Join("/", skill.UsageSources.Where(pair => pair.Value > 0).OrderByDescending(pair => pair.Value).Select(pair => pair.Key));
                 var row = new ListViewItem(skill.VisibleName);
+                row.ToolTipText = skill.VisibleName + "\n$" + skill.Invocation + "\n" + skill.VisibleDescription;
                 row.SubItems.Add(string.IsNullOrWhiteSpace(skill.Category) ? "未分类" : skill.Category);
                 row.SubItems.Add(skill.UsageCount.ToString("N0"));
                 row.SubItems.Add(sourceText);

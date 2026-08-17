@@ -16,8 +16,10 @@ Skill Float 是一个面向 Windows 的轻量级 Skill 悬浮选择器。它会�
 - 本地回退：未配置接口或接口调用失败时，自动使用本地规则提供基础推荐。
 - 安全调用：别名不会修改 Skill 文件夹、`SKILL.md` 或真实调用名。
 - 收藏置顶：常用 Skill 可收藏并单独筛选。
+- Skill 管理：本地 Skill 可在二次确认后移入 Windows 回收站；插件和系统 Skill 只从列表隐藏，可在“已隐藏”分类中恢复。
 - 悬浮与托盘：关闭窗口后保留在系统托盘，可随时再次唤出。
-- 失焦最小化：点击悬浮窗之外的区域时自动最小化，快捷键可立即再次唤出。
+- 系统窗口控制：主窗口使用 Windows 标题栏的缩小与关闭按钮，所有弹窗会按屏幕可用区自适应尺寸。
+- 手动最小化：使用 Windows 标题栏的最小化按钮收起到任务栏；点击窗口外部不会改变窗口状态。
 - 调用统计：汇总 Skill Float、Codex、Claude Code 与 OpenClaw 中可识别的调用次数，并按分类展示常用 Skill。
 - 快捷键回退：优先使用 `Alt+S`；被占用时依次尝试 `Alt+Shift+S` 和 `Ctrl+Alt+S`，并在界面显示实际组合。
 - 剪贴板保护：成功插入后恢复原有文本剪贴板；无法恢复目标输入框时保留调用文本供手动粘贴。
@@ -29,7 +31,7 @@ Skill Float 是一个面向 Windows 的轻量级 Skill 悬浮选择器。它会�
 - `%USERPROFILE%\.codex\skills`
 - `%USERPROFILE%\.codex\plugins\cache`
 
-中文别名、用途、分类、标签、推荐草稿、收藏状态和调用统计统一保存在 `%LOCALAPPDATA%\SkillFloat\UserData`，不会写回原始 Skill。调用统计会在本地读取 Codex、Claude Code 与 OpenClaw 可识别的 JSONL 历史文件，只保存 Skill 调用名、来源、文件增量位置与次数，不保存或上传对话正文。使用 AI 汉化时，只会向用户配置的接口发送 Skill 调用名、原始名称和原始说明；API 密钥通过 Windows DPAPI 按当前用户加密保存。未使用 AI 汉化时，应用不会上传数据。
+中文别名、用途、分类、标签、推荐草稿、收藏状态、隐藏列表和调用统计统一保存在 `%LOCALAPPDATA%\SkillFloat\UserData`，不会写回原始 Skill。调用统计会在本地读取 Codex、Claude Code 与 OpenClaw 可识别的 JSONL 历史文件，只保存 Skill 调用名、来源、文件增量位置与次数，不保存或上传对话正文。使用 AI 汉化时，只会向用户配置的接口发送 Skill 调用名、原始名称和原始说明；API 密钥通过 Windows DPAPI 按当前用户加密保存。未使用 AI 汉化时，应用不会上传数据。
 
 从 0.2.x 升级时，安装器会先迁移旧配置和 Windows 凭据，再在原安装位置静默替换程序。以后更新或卸载均不会删除上述用户数据，因此 API 信息、汉化结果、分类、标签、收藏和调用统计可以持续保留。
 
@@ -41,7 +43,7 @@ Skill Float 是一个面向 Windows 的轻量级 Skill 悬浮选择器。它会�
 pwsh -File .\scripts\build-native.ps1
 ```
 
-脚本会编译、自检并生成简体中文 NSIS 安装程序 `release\Skill Float_0.3.1_x64-setup.exe`，默认按当前用户安装，无需管理员权限。0.2.x 的 Tauri 源码暂留在仓库中作为迁移参考，但不再参与生产构建。
+脚本会编译、自检并生成简体中文 NSIS 安装程序 `release\Skill Float_0.3.2_x64-setup.exe`，默认按当前用户安装，无需管理员权限。0.2.x 的 Tauri 源码暂留在仓库中作为迁移参考，但不再参与生产构建。
 
 ## 技术栈
 

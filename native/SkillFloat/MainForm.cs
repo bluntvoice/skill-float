@@ -12,6 +12,7 @@ namespace SkillFloat
     internal sealed class MainForm : Form
     {
         private const int HotkeyId = 73;
+        private const string HiddenCategoryValue = "__hidden__";
         private readonly AliasStore _aliases;
         private readonly AiService _ai = new AiService();
         private readonly ListBox _list = new ListBox();
@@ -52,16 +53,20 @@ namespace SkillFloat
             Theme.StyleForm(this);
             Text = "Skill Float";
             Name = "SkillFloatMainWindow";
-            FormBorderStyle = Program.QaMode ? FormBorderStyle.FixedSingle : FormBorderStyle.None;
+            FormBorderStyle = FormBorderStyle.Sizable;
             StartPosition = FormStartPosition.CenterScreen;
             Size = new Size(680, 720);
             MinimumSize = new Size(560, 560);
+            MaximizeBox = false;
+            MinimizeBox = true;
+            ControlBox = true;
             TopMost = true;
-            ShowInTaskbar = Program.QaMode;
+            ShowInTaskbar = true;
             KeyPreview = true;
             Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
             Padding = new Padding(1);
             BackColor = Theme.BorderStrong;
+            Theme.ConstrainToWorkingArea(this);
             BuildInterface();
             BuildTray();
             LoadSkills();
@@ -83,10 +88,6 @@ namespace SkillFloat
                 _search.Focus();
                 await RefreshUsageAsync().ConfigureAwait(true);
                 if (!Program.QaMode) await AutoClassifyAsync().ConfigureAwait(true);
-            };
-            Deactivate += (_, __) =>
-            {
-                if (!Program.QaMode && _modalDepth == 0 && Visible) MinimizeForFocusLoss();
             };
             FormClosing += (_, eventArgs) =>
             {
@@ -155,46 +156,33 @@ namespace SkillFloat
         {
             var shell = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Theme.Surface, RowCount = 5, ColumnCount = 1, Margin = Padding.Empty, Padding = Padding.Empty };
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 94));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 104));
             shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
             Controls.Add(shell);
 
             var title = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(18, 13, 12, 10) };
-            title.MouseDown += (_, eventArgs) => { if (eventArgs.Button == MouseButtons.Left) NativeMethods.BeginWindowDrag(this); };
             var mark = new Label { Text = "S", TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 12F, FontStyle.Bold), ForeColor = Color.White, BackColor = Theme.Primary, Size = new Size(38, 38), Location = new Point(18, 16) };
-            mark.MouseDown += (_, eventArgs) => { if (eventArgs.Button == MouseButtons.Left) NativeMethods.BeginWindowDrag(this); };
             var brand = Theme.Label("Skill Float", new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold), Theme.Text);
             brand.Location = new Point(68, 15);
             var subtitle = Theme.Label("轻按一下，调用所需能力", Theme.Small, Theme.Muted);
             subtitle.Location = new Point(68, 39);
-            var minimize = Theme.Button("—");
-            minimize.AccessibleName = "最小化悬浮窗";
-            minimize.Size = new Size(38, 38);
-            minimize.Location = new Point(ClientSize.Width - 92, 14);
-            minimize.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            minimize.Click += (_, __) => MinimizeForFocusLoss();
-            var close = Theme.Button("×");
-            close.AccessibleName = "隐藏悬浮窗";
-            close.Font = new Font("Segoe UI", 13F);
-            close.Size = new Size(38, 38);
-            close.Location = new Point(ClientSize.Width - 50, 14);
-            close.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            close.Click += (_, __) => HideToTray();
-            title.Controls.AddRange(new Control[] { mark, brand, subtitle, minimize, close });
+            title.Controls.AddRange(new Control[] { mark, brand, subtitle });
             shell.Controls.Add(title, 0, 0);
 
-            var toolbar = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(18, 10, 18, 8) };
+            var toolbar = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Surface, Padding = new Padding(18, 10, 18, 4) };
             _search.Dock = DockStyle.Top;
             _search.Height = 38;
             _search.Font = new Font("Microsoft YaHei UI", 10F);
             _search.BorderStyle = BorderStyle.FixedSingle;
             _search.AccessibleName = "搜索 Skill";
             _search.TextChanged += (_, __) => ApplyFilter();
-            var filterRow = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 36, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Theme.Surface, Padding = new Padding(0, 4, 0, 0) };
+            var filterRow = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 46, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = Theme.Surface, Padding = new Padding(0, 2, 0, 2) };
             _allButton.Width = 74;
             _favoriteFilterButton.Width = 74;
+            _allButton.Margin = new Padding(0, 4, 6, 4);
+            _favoriteFilterButton.Margin = new Padding(0, 4, 6, 4);
             _allButton.Click += (_, __) =>
             {
                 _favoritesOnly = false;
@@ -207,21 +195,25 @@ namespace SkillFloat
             _categoryFilter.Height = 28;
             _categoryFilter.Font = Theme.Small;
             _categoryFilter.AccessibleName = "按分类筛选 Skill";
-            _categoryFilter.Margin = new Padding(10, 1, 0, 0);
+            _categoryFilter.Margin = new Padding(4, 7, 0, 0);
             _categoryFilter.SelectedIndexChanged += (_, __) => { if (!_updatingCategories) ApplyFilter(); };
             var categoryLabel = Theme.Label("分类", Theme.Small, Theme.Secondary);
-            categoryLabel.Margin = new Padding(14, 7, 0, 0);
+            categoryLabel.Margin = new Padding(8, 10, 0, 0);
             filterRow.Controls.AddRange(new Control[] { _allButton, _favoriteFilterButton, categoryLabel, _categoryFilter });
             toolbar.Controls.Add(_search);
             toolbar.Controls.Add(filterRow);
             shell.Controls.Add(toolbar, 0, 1);
 
-            var statusBar = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Soft, Padding = new Padding(18, 7, 18, 5) };
-            _status.Location = new Point(18, 8);
-            _count.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-            _count.Location = new Point(ClientSize.Width - 76, 8);
-            statusBar.Controls.Add(_status);
-            statusBar.Controls.Add(_count);
+            var statusBar = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Theme.Soft, Padding = new Padding(18, 5, 18, 3), ColumnCount = 2, RowCount = 1 };
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            statusBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            _status.AutoSize = false;
+            _status.Dock = DockStyle.Fill;
+            _status.TextAlign = ContentAlignment.MiddleLeft;
+            _count.Dock = DockStyle.Fill;
+            _count.TextAlign = ContentAlignment.MiddleRight;
+            statusBar.Controls.Add(_status, 0, 0);
+            statusBar.Controls.Add(_count, 1, 0);
             shell.Controls.Add(statusBar, 0, 2);
 
             _list.Dock = DockStyle.Fill;
@@ -293,9 +285,12 @@ namespace SkillFloat
         {
             var terms = _search.Text.Trim().ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var selectedCategory = (_categoryFilter.SelectedItem as CategoryFilterItem)?.Value ?? "";
+            var browsingHidden = selectedCategory == HiddenCategoryValue;
             _visible = _skills.Where(skill =>
-                (!_favoritesOnly || skill.Favorite)
-                && (selectedCategory.Length == 0
+                (browsingHidden ? skill.Hidden : !skill.Hidden)
+                && (!_favoritesOnly || browsingHidden || skill.Favorite)
+                && (browsingHidden
+                    || selectedCategory.Length == 0
                     || (selectedCategory == "未分类" && string.IsNullOrWhiteSpace(skill.Category))
                     || string.Equals(skill.Category, selectedCategory, StringComparison.CurrentCultureIgnoreCase))
                 && terms.All(term => SearchText(skill).Contains(term)))
@@ -316,14 +311,16 @@ namespace SkillFloat
         private void RefreshCategoryFilter()
         {
             var previous = (_categoryFilter.SelectedItem as CategoryFilterItem)?.Value ?? "";
-            var groups = _skills.GroupBy(skill => string.IsNullOrWhiteSpace(skill.Category) ? "未分类" : skill.Category)
+            var visibleSkills = _skills.Where(skill => !skill.Hidden).ToList();
+            var hiddenCount = _skills.Count(skill => skill.Hidden);
+            var groups = visibleSkills.GroupBy(skill => string.IsNullOrWhiteSpace(skill.Category) ? "未分类" : skill.Category)
                 .ToDictionary(group => group.Key, group => group.Count(), StringComparer.CurrentCultureIgnoreCase);
             var order = new[] { "开发与代码", "文档与内容", "设计与多媒体", "数据与自动化", "法律与专业", "沟通与协作", "其他", "未分类" };
             _updatingCategories = true;
             try
             {
                 _categoryFilter.Items.Clear();
-                _categoryFilter.Items.Add(new CategoryFilterItem { Value = "", Label = "全部分类（" + _skills.Count + "）" });
+                _categoryFilter.Items.Add(new CategoryFilterItem { Value = "", Label = "全部分类（" + visibleSkills.Count + "）" });
                 foreach (var category in order)
                 {
                     int count;
@@ -332,6 +329,7 @@ namespace SkillFloat
                 }
                 foreach (var pair in groups.Where(pair => !order.Contains(pair.Key)).OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase))
                     _categoryFilter.Items.Add(new CategoryFilterItem { Value = pair.Key, Label = pair.Key + "（" + pair.Value + "）" });
+                if (hiddenCount > 0) _categoryFilter.Items.Add(new CategoryFilterItem { Value = HiddenCategoryValue, Label = "已隐藏（" + hiddenCount + "）" });
                 _categoryFilter.SelectedIndex = 0;
                 for (var index = 0; index < _categoryFilter.Items.Count; index++)
                 {
@@ -361,7 +359,7 @@ namespace SkillFloat
             TextRenderer.DrawText(e.Graphics, (skill.Favorite ? "★ " : "") + skill.VisibleName, Theme.Strong, new Rectangle(left, e.Bounds.Top + 8, width - 95, 20), Theme.Text, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(e.Graphics, "调用 " + skill.UsageCount + " 次", Theme.Caption, new Rectangle(e.Bounds.Right - 92, e.Bounds.Top + 9, 76, 18), Theme.PrimaryDark, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
             TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(skill.VisibleDescription) ? "尚未添加用途说明" : skill.VisibleDescription, Theme.Small, new Rectangle(left, e.Bounds.Top + 30, width - 10, 20), Theme.Secondary, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
-            var meta = "$" + skill.Invocation + "  ·  " + skill.Source + (string.IsNullOrWhiteSpace(skill.Category) ? "" : "  ·  " + skill.Category);
+            var meta = "$" + skill.Invocation + "  ·  " + skill.Source + (skill.Hidden ? "  ·  已隐藏" : "") + (string.IsNullOrWhiteSpace(skill.Category) ? "" : "  ·  " + skill.Category);
             TextRenderer.DrawText(e.Graphics, meta, Theme.Caption, new Rectangle(left, e.Bounds.Top + 53, width - 10, 17), Theme.Muted, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
             using (var pen = new Pen(Theme.Border)) e.Graphics.DrawLine(pen, left, e.Bounds.Bottom - 1, e.Bounds.Right - 14, e.Bounds.Bottom - 1);
             e.DrawFocusRectangle();
@@ -439,7 +437,7 @@ namespace SkillFloat
 
         private void OpenTranslation()
         {
-            WithModal(new TranslationForm(_skills, _aliases, _ai), dialog =>
+            WithModal(new TranslationForm(_skills.Where(skill => !skill.Hidden).ToList(), _aliases, _ai), dialog =>
             {
                 dialog.ShowDialog(this);
                 foreach (var skill in _skills)
@@ -458,7 +456,7 @@ namespace SkillFloat
 
         private void OpenUsage()
         {
-            WithModal(new UsageForm(_skills, _usage, async () => await RefreshUsageAsync()), dialog => dialog.ShowDialog(this));
+            WithModal(new UsageForm(_skills.Where(skill => !skill.Hidden).ToList(), _usage, async () => await RefreshUsageAsync()), dialog => dialog.ShowDialog(this));
         }
 
         private void WithModal<T>(T dialog, Action<T> action) where T : Form
@@ -498,7 +496,7 @@ namespace SkillFloat
         private async Task AutoClassifyAsync()
         {
             if (!_ai.IsConfigured) return;
-            var pending = _skills.Where(skill => string.IsNullOrWhiteSpace(skill.Category) || skill.Tags.Count == 0).ToList();
+            var pending = _skills.Where(skill => !skill.Hidden && (string.IsNullOrWhiteSpace(skill.Category) || skill.Tags.Count == 0)).ToList();
             if (pending.Count == 0) return;
             var completed = 0;
             for (var offset = 0; offset < pending.Count; offset += 20)
@@ -544,19 +542,84 @@ namespace SkillFloat
 
         private void ListMouseUp(object sender, MouseEventArgs eventArgs)
         {
-            if (eventArgs.Button != MouseButtons.Right || Selected == null) return;
+            if (eventArgs.Button != MouseButtons.Right) return;
+            var index = _list.IndexFromPoint(eventArgs.Location);
+            if (index < 0) return;
+            _list.SelectedIndex = index;
+            if (Selected == null) return;
             var menu = new ContextMenuStrip();
+            if (Selected.Hidden) menu.Items.Add("恢复显示", null, (_, __) => SetHidden(Selected, false));
+            else if (Selected.Source.Equals("本地 Skill", StringComparison.OrdinalIgnoreCase)) menu.Items.Add("移入回收站…", null, (_, __) => DeleteLocalSkill(Selected));
+            else menu.Items.Add("从列表隐藏…", null, (_, __) => SetHidden(Selected, true));
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(Selected.Favorite ? "取消收藏" : "收藏", null, (_, __) => ToggleFavorite());
             menu.Items.Add("编辑显示信息", null, (_, __) => OpenEditor());
             menu.Items.Add("复制调用名", null, (_, __) => Clipboard.SetText("$" + Selected.Invocation));
             menu.Show(_list, eventArgs.Location);
         }
 
+        private void SetHidden(SkillItem skill, bool hidden)
+        {
+            if (skill == null) return;
+            var action = hidden ? "隐藏" : "恢复显示";
+            var detail = hidden
+                ? "这不会删除任何文件，可在分类下拉框的“已隐藏”中恢复。"
+                : "恢复后将重新出现在原分类中。";
+            var result = MessageBox.Show(this,
+                "即将" + action + "：\n\n" + skill.VisibleName + "\n$" + skill.Invocation + "\n来源：" + skill.Source + "\n路径：" + skill.SourcePath + "\n\n" + detail,
+                action + " Skill",
+                MessageBoxButtons.YesNo,
+                hidden ? MessageBoxIcon.Question : MessageBoxIcon.Information,
+                MessageBoxDefaultButton.Button2);
+            if (result != DialogResult.Yes) return;
+            var store = Storage.LoadHiddenSkills();
+            var values = new HashSet<string>(store.skills, StringComparer.OrdinalIgnoreCase);
+            if (hidden) values.Add(skill.Invocation);
+            else values.Remove(skill.Invocation);
+            store.skills = values.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToList();
+            Storage.SaveHiddenSkills(store);
+            skill.Hidden = hidden;
+            RefreshCategoryFilter();
+            ApplyFilter();
+            SetStatus(hidden ? "已隐藏 $" + skill.Invocation + "，文件未删除" : "已恢复显示 $" + skill.Invocation);
+        }
+
+        private void DeleteLocalSkill(SkillItem skill)
+        {
+            string directory, reason;
+            int containedSkills;
+            if (!SkillFileManager.TryGetDeletableDirectory(skill, out directory, out containedSkills, out reason))
+            {
+                MessageBox.Show(this, reason, "无法删除 Skill", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            var nestedWarning = containedSkills > 1
+                ? "\n\n注意：该目录共包含 " + containedSkills + " 个 SKILL.md，它们将随整个目录一起进入回收站。"
+                : "";
+            var result = MessageBox.Show(this,
+                "即将把本地 Skill 目录移入 Windows 回收站：\n\n" + skill.VisibleName + "\n$" + skill.Invocation + "\n路径：" + directory + nestedWarning + "\n\n可从回收站恢复。是否继续？",
+                "移入回收站",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (result != DialogResult.Yes) return;
+            try
+            {
+                SkillFileManager.MoveToRecycleBin(directory);
+                LoadSkills();
+                SetStatus("已将 $" + skill.Invocation + " 移入回收站");
+            }
+            catch (Exception error)
+            {
+                MessageBox.Show(this, "未能移入回收站：" + error.Message, "删除失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
         private void MainKeyDown(object sender, KeyEventArgs eventArgs)
         {
             if (_modalDepth > 0) return;
             if (eventArgs.KeyCode == Keys.Escape) { HideToTray(); eventArgs.Handled = true; }
-            else if (eventArgs.KeyCode == Keys.Enter) { RunSelectedSkill(); eventArgs.Handled = true; }
+            else if (eventArgs.KeyCode == Keys.Enter && ActiveControl != _categoryFilter) { RunSelectedSkill(); eventArgs.Handled = true; }
             else if (eventArgs.Control && eventArgs.KeyCode == Keys.D) { ToggleFavorite(); eventArgs.Handled = true; }
             else if (eventArgs.KeyCode == Keys.F2) { OpenEditor(); eventArgs.Handled = true; }
             else if (eventArgs.Control && eventArgs.KeyCode == Keys.F) { _search.Focus(); _search.SelectAll(); eventArgs.Handled = true; }
@@ -576,13 +639,6 @@ namespace SkillFloat
         {
             TopMost = false;
             Hide();
-            TrimWorkingSet();
-        }
-
-        private void MinimizeForFocusLoss()
-        {
-            TopMost = false;
-            WindowState = FormWindowState.Minimized;
             TrimWorkingSet();
         }
 
