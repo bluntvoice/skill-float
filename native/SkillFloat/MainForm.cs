@@ -15,7 +15,7 @@ namespace SkillFloat
         private const string HiddenCategoryValue = "__hidden__";
         private readonly AliasStore _aliases;
         private readonly AiService _ai = new AiService();
-        private readonly ListBox _list = new ListBox();
+        private readonly RedrawListBox _list = new RedrawListBox();
         private readonly TextBox _search = new TextBox();
         private readonly ComboBox _categoryFilter = new ComboBox();
         private readonly Label _status = Theme.Label("正在读取 Skill…", Theme.Small, Theme.Muted);
@@ -27,17 +27,20 @@ namespace SkillFloat
         private readonly Button _translateButton = Theme.Button("AI 汉化");
         private readonly Button _usageButton = Theme.Button("分类与使用");
         private readonly NotifyIcon _tray = new NotifyIcon();
+        private readonly ToolStripMenuItem _trayShortcut = new ToolStripMenuItem("快捷键：正在注册…") { Enabled = false };
         private readonly EventWaitHandle _shutdownEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShutdownEventName);
         private readonly EventWaitHandle _showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Program.ShowEventName);
         private readonly System.Windows.Forms.Timer _controlTimer = new System.Windows.Forms.Timer { Interval = 250 };
         private List<SkillItem> _skills = new List<SkillItem>();
         private List<SkillItem> _visible = new List<SkillItem>();
         private UsageSummary _usage = new UsageSummary();
-        private IntPtr _focusTarget = IntPtr.Zero;
+        private readonly FocusTargetTracker _focusTracker = new FocusTargetTracker();
+        private AppSettings _appSettings;
+        private GlobalHotkeyManager _hotkeyManager;
+        private HotkeyRegistration _hotkey = new HotkeyRegistration();
         private bool _favoritesOnly;
         private bool _allowExit;
         private int _modalDepth;
-        private string _shortcut = "Alt+S";
         private bool _updatingCategories;
 
         private sealed class CategoryFilterItem
@@ -50,6 +53,8 @@ namespace SkillFloat
         public MainForm()
         {
             _aliases = Storage.LoadAliases();
+            _appSettings = Storage.LoadAppSettings();
+            try { StartupManager.SetEnabled(_appSettings.startWithWindows); } catch { }
             Theme.StyleForm(this);
             Text = "Skill Float";
             Name = "SkillFloatMainWindow";
@@ -79,15 +84,17 @@ namespace SkillFloat
                     Close();
                     return;
                 }
+                if (!Visible) _focusTracker.ObserveForeground();
                 if (_showEvent.WaitOne(0)) ShowPicker();
             };
             _controlTimer.Start();
 
             Shown += async (_, __) =>
             {
-                _search.Focus();
+                if (Program.StartHidden) HideToTray();
+                else _search.Focus();
                 await RefreshUsageAsync().ConfigureAwait(true);
-                if (!Program.QaMode) await AutoClassifyAsync().ConfigureAwait(true);
+                if (!Program.QaMode && _appSettings.autoClassifyNewSkills) await AutoClassifyAsync().ConfigureAwait(true);
             };
             FormClosing += (_, eventArgs) =>
             {
@@ -109,23 +116,13 @@ namespace SkillFloat
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            var candidates = new[]
-            {
-                Tuple.Create(NativeMethods.ModAlt, Keys.S, "Alt+S"),
-                Tuple.Create(NativeMethods.ModAlt | NativeMethods.ModShift, Keys.S, "Alt+Shift+S"),
-                Tuple.Create(NativeMethods.ModControl | NativeMethods.ModAlt, Keys.S, "Ctrl+Alt+S")
-            };
-            foreach (var candidate in candidates)
-            {
-                if (!NativeMethods.RegisterHotKey(Handle, HotkeyId, candidate.Item1, (int)candidate.Item2)) continue;
-                _shortcut = candidate.Item3;
-                break;
-            }
+            RegisterHotkey();
         }
 
         protected override void OnHandleDestroyed(EventArgs e)
         {
-            NativeMethods.UnregisterHotKey(Handle, HotkeyId);
+            _hotkeyManager?.Dispose();
+            _hotkeyManager = null;
             base.OnHandleDestroyed(e);
         }
 
@@ -133,12 +130,13 @@ namespace SkillFloat
         {
             if (message.Msg == NativeMethods.WmHotkey && message.WParam.ToInt32() == HotkeyId)
             {
-                _focusTarget = NativeMethods.GetForegroundWindow();
+                _focusTracker.CaptureImmediate();
                 ShowPicker();
                 return;
             }
             if (message.Msg == NativeMethods.WmShowSkillFloat)
             {
+                _focusTracker.Remember(message.WParam);
                 ShowPicker();
                 return;
             }
@@ -252,6 +250,9 @@ namespace SkillFloat
         {
             var menu = new ContextMenuStrip();
             menu.Items.Add("打开 Skill Float", null, (_, __) => ShowPicker());
+            menu.Items.Add(_trayShortcut);
+            menu.Items.Add("设置…", null, (_, __) => OpenSettings());
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("退出", null, (_, __) => { _allowExit = true; _tray.Visible = false; Close(); });
             _tray.Icon = Icon;
             _tray.Text = "Skill Float · 快速调用 Skill";
@@ -263,11 +264,11 @@ namespace SkillFloat
         private void LoadSkills()
         {
             _skills = SkillDiscovery.Discover(_aliases);
-            _usage = UsageScanner.Current(_skills);
+            _usage = UsageScanner.Current(_skills, _appSettings);
             ApplyUsage();
             RefreshCategoryFilter();
             ApplyFilter();
-            SetStatus("已读取 " + _skills.Count + " 个 Skill · 唤出快捷键 " + _shortcut);
+            SetStatus("已读取 " + _skills.Count + " 个 Skill" + HotkeyStatusSuffix(), !_hotkey.Success);
         }
 
         private void ApplyUsage()
@@ -283,20 +284,16 @@ namespace SkillFloat
 
         private void ApplyFilter()
         {
-            var terms = _search.Text.Trim().ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             var selectedCategory = (_categoryFilter.SelectedItem as CategoryFilterItem)?.Value ?? "";
             var browsingHidden = selectedCategory == HiddenCategoryValue;
-            _visible = _skills.Where(skill =>
+            var candidates = _skills.Where(skill =>
                 (browsingHidden ? skill.Hidden : !skill.Hidden)
                 && (!_favoritesOnly || browsingHidden || skill.Favorite)
                 && (browsingHidden
                     || selectedCategory.Length == 0
                     || (selectedCategory == "未分类" && string.IsNullOrWhiteSpace(skill.Category))
-                    || string.Equals(skill.Category, selectedCategory, StringComparison.CurrentCultureIgnoreCase))
-                && terms.All(term => SearchText(skill).Contains(term)))
-                .OrderByDescending(skill => skill.Favorite)
-                .ThenBy(skill => skill.VisibleName, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
+                    || string.Equals(skill.Category, selectedCategory, StringComparison.CurrentCultureIgnoreCase)));
+            _visible = SkillSearchRanker.Rank(candidates, _search.Text).ToList();
             _list.BeginUpdate();
             _list.Items.Clear();
             foreach (var skill in _visible) _list.Items.Add(skill);
@@ -342,27 +339,26 @@ namespace SkillFloat
             finally { _updatingCategories = false; }
         }
 
-        private static string SearchText(SkillItem skill) => string.Join(" ", new[] { skill.Invocation, skill.Name, skill.DisplayName, skill.Description, skill.LocalizedDescription, skill.Source, skill.Category, string.Join(" ", skill.Tags) }).ToLowerInvariant();
-
         private void DrawSkill(object sender, DrawItemEventArgs e)
         {
             if (e.Index < 0 || e.Index >= _visible.Count) return;
             var skill = _visible[e.Index];
             var selected = (e.State & DrawItemState.Selected) != 0;
-            using (var background = new SolidBrush(selected ? Color.FromArgb(237, 247, 244) : Theme.Surface)) e.Graphics.FillRectangle(background, e.Bounds);
-            if (selected) using (var accent = new SolidBrush(Theme.Primary)) e.Graphics.FillRectangle(accent, new Rectangle(e.Bounds.Left, e.Bounds.Top + 5, 3, e.Bounds.Height - 10));
-            var monogram = new Rectangle(e.Bounds.Left + 14, e.Bounds.Top + 16, 38, 38);
+            var rowBounds = new Rectangle(0, e.Bounds.Top, _list.ClientSize.Width, e.Bounds.Height);
+            using (var background = new SolidBrush(selected ? Color.FromArgb(237, 247, 244) : Theme.Surface)) e.Graphics.FillRectangle(background, rowBounds);
+            if (selected) using (var accent = new SolidBrush(Theme.Primary)) e.Graphics.FillRectangle(accent, new Rectangle(rowBounds.Left, rowBounds.Top + 5, 3, rowBounds.Height - 10));
+            var monogram = new Rectangle(rowBounds.Left + 14, rowBounds.Top + 16, 38, 38);
             using (var brush = new SolidBrush(Theme.PrimarySoft)) e.Graphics.FillRectangle(brush, monogram);
             TextRenderer.DrawText(e.Graphics, Initials(skill.VisibleName), Theme.Strong, monogram, Theme.PrimaryDark, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
-            var left = e.Bounds.Left + 64;
-            var width = Math.Max(80, e.Bounds.Width - 80);
-            TextRenderer.DrawText(e.Graphics, (skill.Favorite ? "★ " : "") + skill.VisibleName, Theme.Strong, new Rectangle(left, e.Bounds.Top + 8, width - 95, 20), Theme.Text, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(e.Graphics, "调用 " + skill.UsageCount + " 次", Theme.Caption, new Rectangle(e.Bounds.Right - 92, e.Bounds.Top + 9, 76, 18), Theme.PrimaryDark, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
-            TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(skill.VisibleDescription) ? "尚未添加用途说明" : skill.VisibleDescription, Theme.Small, new Rectangle(left, e.Bounds.Top + 30, width - 10, 20), Theme.Secondary, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+            var left = rowBounds.Left + 64;
+            var width = Math.Max(80, rowBounds.Width - 80);
+            TextRenderer.DrawText(e.Graphics, (skill.Favorite ? "★ " : "") + skill.VisibleName, Theme.Strong, new Rectangle(left, rowBounds.Top + 8, width - 95, 20), Theme.Text, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(e.Graphics, "调用 " + skill.UsageCount + " 次", Theme.Caption, new Rectangle(rowBounds.Right - 92, rowBounds.Top + 9, 76, 18), Theme.PrimaryDark, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            TextRenderer.DrawText(e.Graphics, string.IsNullOrWhiteSpace(skill.VisibleDescription) ? "尚未添加用途说明" : skill.VisibleDescription, Theme.Small, new Rectangle(left, rowBounds.Top + 30, width - 10, 20), Theme.Secondary, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
             var meta = "$" + skill.Invocation + "  ·  " + skill.Source + (skill.Hidden ? "  ·  已隐藏" : "") + (string.IsNullOrWhiteSpace(skill.Category) ? "" : "  ·  " + skill.Category);
-            TextRenderer.DrawText(e.Graphics, meta, Theme.Caption, new Rectangle(left, e.Bounds.Top + 53, width - 10, 17), Theme.Muted, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
-            using (var pen = new Pen(Theme.Border)) e.Graphics.DrawLine(pen, left, e.Bounds.Bottom - 1, e.Bounds.Right - 14, e.Bounds.Bottom - 1);
-            e.DrawFocusRectangle();
+            TextRenderer.DrawText(e.Graphics, meta, Theme.Caption, new Rectangle(left, rowBounds.Top + 53, width - 10, 17), Theme.Muted, TextFormatFlags.EndEllipsis | TextFormatFlags.VerticalCenter);
+            using (var pen = new Pen(Theme.Border)) e.Graphics.DrawLine(pen, left, rowBounds.Bottom - 1, rowBounds.Right - 14, rowBounds.Bottom - 1);
+            if ((e.State & DrawItemState.Focus) != 0) ControlPaint.DrawFocusRectangle(e.Graphics, rowBounds);
         }
 
         private static string Initials(string text)
@@ -389,19 +385,26 @@ namespace SkillFloat
             if (skill == null) return;
             var text = "$" + skill.Invocation + " ";
             string previous = null;
-            try { previous = Clipboard.ContainsText() ? Clipboard.GetText() : null; } catch { }
+            var previousWasText = false;
+            try { previousWasText = Clipboard.ContainsText(); if (previousWasText) previous = Clipboard.GetText(); } catch { }
             try { Clipboard.SetText(text); }
             catch { SetStatus("写入剪贴板失败，请重试", true); return; }
             Hide();
             TopMost = false;
             await Task.Delay(80);
-            var inserted = _focusTarget != IntPtr.Zero && NativeMethods.IsWindow(_focusTarget) && NativeMethods.SetForegroundWindow(_focusTarget);
+            var focusTarget = _focusTracker.Consume();
+            var inserted = focusTarget != IntPtr.Zero && NativeMethods.IsWindow(focusTarget) && NativeMethods.SetForegroundWindow(focusTarget);
             if (inserted)
             {
                 await Task.Delay(80);
                 NativeMethods.SendPaste();
                 await Task.Delay(320);
-                if (previous != null) try { Clipboard.SetText(previous); } catch { }
+                try
+                {
+                    if (previousWasText) Clipboard.SetText(previous ?? "");
+                    else Clipboard.Clear();
+                }
+                catch { }
             }
             else
             {
@@ -484,10 +487,10 @@ namespace SkillFloat
             try
             {
                 SetStatus("正在读取本地调用历史…");
-                _usage = await Task.Run(() => UsageScanner.Refresh(_skills, (done, total, source) => BeginInvoke(new Action(() => SetStatus("正在读取 " + source + " · " + done + "/" + total))), CancellationToken.None));
+                _usage = await Task.Run(() => UsageScanner.Refresh(_skills, (done, total, source) => BeginInvoke(new Action(() => SetStatus("正在读取 " + source + " · " + done + "/" + total))), CancellationToken.None, _appSettings));
                 ApplyUsage();
                 _list.Invalidate();
-                SetStatus("统计已更新 · 共 " + _usage.Total + " 次调用");
+                SetStatus("统计已更新 · 共 " + _usage.Total + " 次调用" + (_hotkey.Success ? "" : " · 快捷键不可用，请从托盘打开"), !_hotkey.Success);
                 TrimWorkingSet();
             }
             catch (Exception error) { SetStatus("读取调用历史失败：" + error.Message, true); TrimWorkingSet(); }
@@ -605,6 +608,11 @@ namespace SkillFloat
             if (result != DialogResult.Yes) return;
             try
             {
+                string verifiedDirectory, verifyReason;
+                int verifiedCount;
+                if (!SkillFileManager.TryGetDeletableDirectory(skill, out verifiedDirectory, out verifiedCount, out verifyReason)
+                    || !verifiedDirectory.Equals(directory, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(string.IsNullOrWhiteSpace(verifyReason) ? "删除目标在确认期间发生变化，操作已取消。" : verifyReason);
                 SkillFileManager.MoveToRecycleBin(directory);
                 LoadSkills();
                 SetStatus("已将 $" + skill.Invocation + " 移入回收站");
@@ -623,16 +631,46 @@ namespace SkillFloat
             else if (eventArgs.Control && eventArgs.KeyCode == Keys.D) { ToggleFavorite(); eventArgs.Handled = true; }
             else if (eventArgs.KeyCode == Keys.F2) { OpenEditor(); eventArgs.Handled = true; }
             else if (eventArgs.Control && eventArgs.KeyCode == Keys.F) { _search.Focus(); _search.SelectAll(); eventArgs.Handled = true; }
+            else if (eventArgs.Control && eventArgs.KeyCode == Keys.Oemcomma) { OpenSettings(); eventArgs.Handled = true; }
         }
 
         private void ShowPicker()
         {
-            if (_focusTarget == IntPtr.Zero) _focusTarget = NativeMethods.GetForegroundWindow();
+            _focusTracker.ObserveForeground();
             Show();
             WindowState = FormWindowState.Normal;
             TopMost = true;
             Activate();
             _search.Focus();
+        }
+
+        private void OpenSettings()
+        {
+            WithModal(new SettingsForm(), dialog =>
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                _appSettings = Storage.LoadAppSettings();
+                RegisterHotkey();
+                _ = RefreshUsageAsync();
+            });
+        }
+
+        private void RegisterHotkey()
+        {
+            if (!IsHandleCreated) return;
+            _hotkeyManager?.Dispose();
+            _hotkeyManager = new GlobalHotkeyManager(Handle, HotkeyId);
+            _hotkey = _hotkeyManager.Register(_appSettings.globalShortcut);
+            _trayShortcut.Text = _hotkey.Success ? "快捷键：" + _hotkey.DisplayName : "快捷键：不可用（请打开设置）";
+            _tray.Text = _hotkey.Success ? "Skill Float · " + _hotkey.DisplayName : "Skill Float · 托盘入口可用";
+            SetStatus(_hotkey.Success
+                ? "已读取 " + _skills.Count + " 个 Skill · 唤出快捷键 " + _hotkey.DisplayName
+                : _hotkey.Error, !_hotkey.Success);
+        }
+
+        private string HotkeyStatusSuffix()
+        {
+            return _hotkey.Success ? " · 唤出快捷键 " + _hotkey.DisplayName : " · 快捷键不可用，请从托盘打开";
         }
 
         private void HideToTray()

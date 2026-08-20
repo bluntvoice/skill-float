@@ -19,13 +19,19 @@ namespace SkillFloat
         public const byte VkV = 0x56;
         public const int GwlExStyle = -20;
         public const int WsExToolWindow = 0x00000080;
+        public const uint RedrawInvalidate = 0x0001;
+        public const uint RedrawErase = 0x0004;
+        public const uint RedrawFrame = 0x0400;
+        public const uint RedrawUpdateNow = 0x0100;
         public static readonly IntPtr HwndBroadcast = new IntPtr(0xFFFF);
 
-        [DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr hWnd, int id, int modifiers, int virtualKey);
+        [DllImport("user32.dll", SetLastError = true)] public static extern bool RegisterHotKey(IntPtr hWnd, int id, int modifiers, int virtualKey);
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRectangle, IntPtr updateRegion, uint flags);
+        [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindow(string className, string windowName);
         [DllImport("user32.dll")] public static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);

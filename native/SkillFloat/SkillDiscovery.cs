@@ -13,13 +13,19 @@ namespace SkillFloat
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var localRoot = Path.Combine(home, ".codex", "skills");
             var pluginRoot = Path.Combine(home, ".codex", "plugins", "cache");
-            var found = new Dictionary<string, Tuple<int, SkillItem>>(StringComparer.OrdinalIgnoreCase);
             var hidden = new HashSet<string>(Storage.LoadHiddenSkills().skills, StringComparer.OrdinalIgnoreCase);
+            return DiscoverFromRoots(aliases, localRoot, pluginRoot, hidden);
+        }
+
+        internal static List<SkillItem> DiscoverFromRoots(AliasStore aliases, string localRoot, string pluginRoot, HashSet<string> hidden)
+        {
+            var found = new Dictionary<string, Tuple<int, SkillItem>>(StringComparer.OrdinalIgnoreCase);
 
             Collect(localRoot, path =>
             {
                 string name, description;
                 if (!TryReadFrontmatter(path, out name, out description)) return;
+                if (!IsValidInvocation(name)) return;
                 var relative = SafeRelative(localRoot, path);
                 var depth = relative.Split(Path.DirectorySeparatorChar).Length;
                 var source = path.StartsWith(Path.Combine(localRoot, ".system"), StringComparison.OrdinalIgnoreCase) ? "系统 Skill" : "本地 Skill";
@@ -33,6 +39,7 @@ namespace SkillFloat
                 var plugin = PluginName(pluginRoot, path);
                 if (string.IsNullOrWhiteSpace(plugin)) return;
                 var invocation = name.Contains(":") ? name : plugin + ":" + name;
+                if (!IsValidInvocation(invocation)) return;
                 Add(found, invocation, 99, new SkillItem { Invocation = invocation, Name = name, Description = description, Source = "插件 · " + plugin, SourcePath = path });
             });
 
@@ -54,20 +61,58 @@ namespace SkillFloat
         private static void Add(Dictionary<string, Tuple<int, SkillItem>> found, string invocation, int depth, SkillItem item)
         {
             Tuple<int, SkillItem> existing;
-            if (!found.TryGetValue(invocation, out existing) || depth < existing.Item1) found[invocation] = Tuple.Create(depth, item);
+            if (!found.TryGetValue(invocation, out existing)
+                || depth < existing.Item1
+                || (depth == existing.Item1 && PreferCandidate(item, existing.Item2)))
+                found[invocation] = Tuple.Create(depth, item);
+        }
+
+        private static bool PreferCandidate(SkillItem candidate, SkillItem existing)
+        {
+            if (candidate.Source.StartsWith("插件", StringComparison.OrdinalIgnoreCase)
+                && existing.Source.StartsWith("插件", StringComparison.OrdinalIgnoreCase))
+            {
+                var candidateVersion = VersionFromPluginPath(candidate.SourcePath);
+                var existingVersion = VersionFromPluginPath(existing.SourcePath);
+                var comparison = candidateVersion.CompareTo(existingVersion);
+                if (comparison != 0) return comparison > 0;
+            }
+            return string.Compare(candidate.SourcePath, existing.SourcePath, StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        private static Version VersionFromPluginPath(string path)
+        {
+            var parts = (path ?? "").Split(Path.DirectorySeparatorChar);
+            for (var index = 1; index < parts.Length; index++)
+            {
+                if (!parts[index].Equals("skills", StringComparison.OrdinalIgnoreCase)) continue;
+                var value = parts[index - 1].Split('-')[0];
+                Version version;
+                if (Version.TryParse(value, out version)) return version;
+            }
+            return new Version(0, 0);
         }
 
         private static void Collect(string root, Action<string> visitor)
         {
             if (!Directory.Exists(root)) return;
-            try
+            var pending = new Stack<string>();
+            var files = new List<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
             {
-                foreach (var path in Directory.EnumerateFiles(root, "SKILL.md", SearchOption.AllDirectories))
+                var directory = pending.Pop();
+                try
                 {
-                    try { visitor(path); } catch { }
+                    var info = new DirectoryInfo(directory);
+                    if (!directory.Equals(root, StringComparison.OrdinalIgnoreCase) && (info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+                    files.AddRange(Directory.EnumerateFiles(directory, "SKILL.md", SearchOption.TopDirectoryOnly));
+                    foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly).OrderByDescending(value => value, StringComparer.OrdinalIgnoreCase)) pending.Push(child);
                 }
+                catch { }
             }
-            catch { }
+            foreach (var path in files.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+                try { visitor(path); } catch { }
         }
 
         private static bool TryReadFrontmatter(string path, out string name, out string description)
@@ -124,5 +169,11 @@ namespace SkillFloat
         }
 
         private static string AppendSeparator(string value) => value.EndsWith(Path.DirectorySeparatorChar.ToString()) ? value : value + Path.DirectorySeparatorChar;
+
+        internal static bool IsValidInvocation(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.Length > 160) return false;
+            return value.All(character => char.IsLetterOrDigit(character) || character == '-' || character == '_' || character == ':' || character == '.');
+        }
     }
 }

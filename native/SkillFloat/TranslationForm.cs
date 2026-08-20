@@ -16,9 +16,6 @@ namespace SkillFloat
         private readonly AiService _ai;
         private readonly CheckedListBox _list = new CheckedListBox();
         private readonly ComboBox _listCategory = new ComboBox();
-        private readonly TextBox _endpoint = new TextBox();
-        private readonly TextBox _model = new TextBox();
-        private readonly TextBox _apiKey = new TextBox();
         private readonly Label _invocation = Theme.Label("请选择一个 Skill。", Theme.Mono, Theme.Muted);
         private readonly TextBox _previewName = new TextBox();
         private readonly TextBox _previewDescription = new TextBox();
@@ -58,7 +55,6 @@ namespace SkillFloat
             ShowInTaskbar = Program.QaMode;
             Theme.ConstrainToWorkingArea(this);
             BuildInterface();
-            LoadSettings();
             RestoreBatchSelection();
             RefreshCategoryChoices();
             ReloadList();
@@ -93,37 +89,21 @@ namespace SkillFloat
             titleRow.Margin = new Padding(0, 0, 0, 10);
             root.Controls.Add(titleRow);
 
-            var settings = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 4, BackColor = Theme.Soft, Padding = new Padding(10) };
+            var settings = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, BackColor = Theme.Soft, Padding = new Padding(10) };
+            settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             settings.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 52));
-            settings.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            settings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 48));
-            settings.Controls.Add(Theme.Label("接口", Theme.Small, Theme.Secondary), 0, 0);
-            _endpoint.Dock = DockStyle.Fill;
-            _endpoint.Font = Theme.Small;
-            _endpoint.AccessibleName = "AI 接口地址";
-            settings.Controls.Add(_endpoint, 1, 0);
-            settings.Controls.Add(Theme.Label("模型", Theme.Small, Theme.Secondary), 2, 0);
-            _model.Dock = DockStyle.Fill;
-            _model.Font = Theme.Small;
-            _model.AccessibleName = "AI 模型";
-            settings.Controls.Add(_model, 3, 0);
-            settings.Controls.Add(Theme.Label("API 密钥", Theme.Small, Theme.Secondary), 0, 1);
-            _apiKey.Dock = DockStyle.Fill;
-            _apiKey.UseSystemPasswordChar = true;
-            _apiKey.Font = Theme.Small;
-            _apiKey.AccessibleName = "API 密钥";
-            settings.SetColumnSpan(_apiKey, 3);
-            settings.Controls.Add(_apiKey, 1, 1);
-            var saveSettings = Theme.Button("保存配置");
-            saveSettings.Width = 90;
-            saveSettings.Height = 28;
-            saveSettings.Click += (_, __) => SaveSettings();
-            settings.Controls.Add(saveSettings, 0, 2);
-            settings.SetColumnSpan(saveSettings, 2);
-            var note = Theme.Label("密钥使用 Windows 当前用户加密保存，升级不会删除。", Theme.Caption, Theme.Muted);
-            settings.Controls.Add(note, 2, 2);
-            settings.SetColumnSpan(note, 2);
+            var note = Theme.Label("AI 接口、模型与密钥统一在“设置”中管理。密钥由 Windows 当前用户加密保存。", Theme.Small, Theme.Muted);
+            note.Dock = DockStyle.Fill;
+            note.TextAlign = ContentAlignment.MiddleLeft;
+            settings.Controls.Add(note, 0, 0);
+            var openSettings = Theme.Button("打开设置");
+            openSettings.Width = 94;
+            openSettings.Height = 28;
+            openSettings.Click += (_, __) =>
+            {
+                using (var dialog = new SettingsForm()) dialog.ShowDialog(this);
+            };
+            settings.Controls.Add(openSettings, 1, 0);
             settings.Margin = new Padding(0, 0, 0, 10);
             root.Controls.Add(settings);
 
@@ -258,22 +238,6 @@ namespace SkillFloat
             box.MaxLength = maxLength;
             if (multiline) box.ScrollBars = ScrollBars.Vertical;
             box.TextChanged += (_, __) => MarkEditorDirty();
-        }
-
-        private void LoadSettings()
-        {
-            var settings = Storage.LoadSettings();
-            _endpoint.Text = settings.endpoint ?? "https://api.openai.com/v1";
-            _model.Text = settings.model ?? "";
-            _apiKey.Text = Storage.LoadApiKey();
-        }
-
-        private void SaveSettings()
-        {
-            Storage.SaveSettings(new TranslationSettings { endpoint = _endpoint.Text.Trim(), model = _model.Text.Trim() });
-            Storage.SaveApiKey(_apiKey.Text);
-            _status.ForeColor = Theme.PrimaryDark;
-            _status.Text = "AI 配置已加密保存。";
         }
 
         private void RestoreBatchSelection()
@@ -492,7 +456,7 @@ namespace SkillFloat
                 UpdateSelectionStatus(true);
                 return;
             }
-            SaveSettings();
+            if (!_ai.IsConfigured) { ShowError("请先在设置中配置 AI 接口、模型和 API Key。"); return; }
             SetBusy(true, "准备批量生成预览…", selected.Count);
             var completed = 0;
             try
@@ -551,7 +515,7 @@ namespace SkillFloat
         {
             if (_busy) return;
             SaveEditorDraft();
-            SaveSettings();
+            if (!_ai.IsConfigured) { ShowError("请先在设置中配置 AI 接口、模型和 API Key。"); return; }
             var pending = _skills.Where(skill => string.IsNullOrWhiteSpace(skill.Category)).ToList();
             if (pending.Count == 0) { _status.Text = "所有 Skill 都已有分类。"; return; }
             SetBusy(true, "准备自动分类…", pending.Count);

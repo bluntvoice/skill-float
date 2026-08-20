@@ -47,6 +47,23 @@ namespace SkillFloat
         public string model { get; set; } = "";
     }
 
+    internal sealed class AppSettings
+    {
+        public bool autoClassifyNewSkills { get; set; }
+        public string globalShortcut { get; set; } = "Alt+S";
+        public bool startWithWindows { get; set; }
+        public bool scanCodex { get; set; } = true;
+        public bool scanClaudeCode { get; set; } = true;
+        public bool scanOpenClaw { get; set; } = true;
+    }
+
+    internal sealed class HotkeyRegistration
+    {
+        public bool Success { get; set; }
+        public string DisplayName { get; set; } = "";
+        public string Error { get; set; } = "";
+    }
+
     internal sealed class TranslationSuggestion
     {
         public string shortName { get; set; } = "";

@@ -64,6 +64,8 @@ namespace SkillFloat
 
         public static void StyleForm(Form form)
         {
+            form.AutoScaleMode = AutoScaleMode.Dpi;
+            form.AutoScaleDimensions = new SizeF(96F, 96F);
             form.Font = Body;
             form.ForeColor = Text;
             form.BackColor = Surface;

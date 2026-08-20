@@ -12,11 +12,13 @@ namespace SkillFloat
         internal const string ShutdownEventName = "Local\\SkillFloat.Native.Shutdown";
         internal const string ShowEventName = "Local\\SkillFloat.Native.Show";
         internal static bool QaMode { get; private set; }
+        internal static bool StartHidden { get; private set; }
 
         [STAThread]
         private static int Main(string[] args)
         {
             QaMode = args.Any(value => value.Equals("--qa", StringComparison.OrdinalIgnoreCase));
+            StartHidden = args.Any(value => value.Equals("--startup", StringComparison.OrdinalIgnoreCase));
             if (args.Any(value => value.Equals("--migrate-before-upgrade", StringComparison.OrdinalIgnoreCase)))
             {
                 try { Storage.MigrateLegacyData(); return 0; }
@@ -28,15 +30,17 @@ namespace SkillFloat
                 NativeMethods.PostMessage(NativeMethods.HwndBroadcast, NativeMethods.WmShutdownSkillFloat, IntPtr.Zero, IntPtr.Zero);
                 return 0;
             }
-            if (args.Any(value => value.Equals("--self-test", StringComparison.OrdinalIgnoreCase))) return SelfTest();
+            if (args.Any(value => value.Equals("--self-test", StringComparison.OrdinalIgnoreCase))) return SelfTestRunner.Run();
 
             bool created;
             using (var mutex = new Mutex(true, MutexName, out created))
             {
                 if (!created)
                 {
+                    if (StartHidden) return 0;
+                    var foreground = NativeMethods.GetForegroundWindow();
                     using (var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowEventName)) showEvent.Set();
-                    NativeMethods.PostMessage(NativeMethods.HwndBroadcast, NativeMethods.WmShowSkillFloat, IntPtr.Zero, IntPtr.Zero);
+                    NativeMethods.PostMessage(NativeMethods.HwndBroadcast, NativeMethods.WmShowSkillFloat, foreground, IntPtr.Zero);
                     return 0;
                 }
                 Storage.MigrateLegacyData();
@@ -47,27 +51,5 @@ namespace SkillFloat
             return 0;
         }
 
-        private static int SelfTest()
-        {
-            try
-            {
-                Storage.MigrateLegacyData();
-                var aliases = Storage.LoadAliases();
-                var skills = SkillDiscovery.Discover(aliases);
-                if (skills.Count == 0 || skills.Any(skill => string.IsNullOrWhiteSpace(skill.Invocation))) return 11;
-                var usage = UsageScanner.Current(skills);
-                if (usage.Total < 0 || usage.Sources.Count != 4) return 12;
-                var current = Process.GetCurrentProcess();
-                if (current.PrivateMemorySize64 <= 0) return 13;
-                var local = skills.FirstOrDefault(skill => skill.Source.Equals("本地 Skill", StringComparison.OrdinalIgnoreCase));
-                string directory, reason;
-                int containedSkills;
-                if (local != null && !SkillFileManager.TryGetDeletableDirectory(local, out directory, out containedSkills, out reason)) return 14;
-                var protectedSkill = skills.FirstOrDefault(skill => !skill.Source.Equals("本地 Skill", StringComparison.OrdinalIgnoreCase));
-                if (protectedSkill != null && SkillFileManager.TryGetDeletableDirectory(protectedSkill, out directory, out containedSkills, out reason)) return 15;
-                return 0;
-            }
-            catch { return 10; }
-        }
     }
 }

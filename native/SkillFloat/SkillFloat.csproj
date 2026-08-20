@@ -4,7 +4,7 @@
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <RootNamespace>SkillFloat</RootNamespace>
     <AssemblyName>SkillFloat</AssemblyName>
-    <ApplicationIcon>..\..\src-tauri\icons\icon.ico</ApplicationIcon>
+    <ApplicationIcon>..\..\assets\icon.ico</ApplicationIcon>
     <LangVersion>latest</LangVersion>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
@@ -34,6 +34,13 @@
     <Compile Include="NativeMethods.cs" />
     <Compile Include="SkillDiscovery.cs" />
     <Compile Include="SkillFileManager.cs" />
+    <Compile Include="GlobalHotkeyManager.cs" />
+    <Compile Include="FocusTargetTracker.cs" />
+    <Compile Include="SkillSearchRanker.cs" />
+    <Compile Include="RedrawListBox.cs" />
+    <Compile Include="StartupManager.cs" />
+    <Compile Include="SettingsForm.cs" />
+    <Compile Include="SelfTestRunner.cs" />
     <Compile Include="UsageScanner.cs" />
     <Compile Include="AiService.cs" />
     <Compile Include="Theme.cs" />
@@ -43,5 +50,29 @@
     <Compile Include="UsageForm.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
+    <ReadLinesFromFile File="$(MSBuildProjectDirectory)\..\..\VERSION">
+      <Output TaskParameter="Lines" ItemName="_VersionLine" />
+    </ReadLinesFromFile>
+    <PropertyGroup>
+      <ProductVersion>@(_VersionLine)</ProductVersion>
+      <ProductVersionQuad>$(ProductVersion).0</ProductVersionQuad>
+      <GeneratedVersionFile>$(IntermediateOutputPath)VersionInfo.g.cs</GeneratedVersionFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <_VersionAttribute Include="System.Reflection.AssemblyVersionAttribute">
+        <_Parameter1>$(ProductVersionQuad)</_Parameter1>
+      </_VersionAttribute>
+      <_VersionAttribute Include="System.Reflection.AssemblyFileVersionAttribute">
+        <_Parameter1>$(ProductVersionQuad)</_Parameter1>
+      </_VersionAttribute>
+      <_VersionAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute">
+        <_Parameter1>$(ProductVersion)</_Parameter1>
+      </_VersionAttribute>
+    </ItemGroup>
+    <WriteCodeFragment Language="C#" OutputFile="$(GeneratedVersionFile)" AssemblyAttributes="@(_VersionAttribute)">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+    </WriteCodeFragment>
+  </Target>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

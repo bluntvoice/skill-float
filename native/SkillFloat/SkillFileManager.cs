@@ -8,6 +8,12 @@ namespace SkillFloat
     {
         public static bool TryGetDeletableDirectory(SkillItem skill, out string directory, out int containedSkills, out string reason)
         {
+            var localRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "skills");
+            return TryGetDeletableDirectory(skill, localRoot, out directory, out containedSkills, out reason);
+        }
+
+        internal static bool TryGetDeletableDirectory(SkillItem skill, string allowedLocalRoot, out string directory, out int containedSkills, out string reason)
+        {
             directory = "";
             containedSkills = 0;
             reason = "";
@@ -18,7 +24,7 @@ namespace SkillFloat
             }
             try
             {
-                var localRoot = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "skills"));
+                var localRoot = Path.GetFullPath(allowedLocalRoot);
                 var systemRoot = Path.GetFullPath(Path.Combine(localRoot, ".system"));
                 var skillFile = Path.GetFullPath(skill.SourcePath ?? "");
                 if (!Path.GetFileName(skillFile).Equals("SKILL.md", StringComparison.OrdinalIgnoreCase))
@@ -45,6 +51,12 @@ namespace SkillFloat
                     directory = "";
                     return false;
                 }
+                if (ContainsReparsePoint(localRoot, directory) || ContainsReparsePointInTree(directory))
+                {
+                    reason = "Skill 目录包含符号链接或目录联接。为避免越界删除，已拒绝操作。";
+                    directory = "";
+                    return false;
+                }
                 containedSkills = Directory.GetFiles(directory, "SKILL.md", System.IO.SearchOption.AllDirectories).Length;
                 return true;
             }
@@ -59,6 +71,36 @@ namespace SkillFloat
         public static void MoveToRecycleBin(string directory)
         {
             FileSystem.DeleteDirectory(directory, UIOption.OnlyErrorDialogs, RecycleOption.SendToRecycleBin, UICancelOption.ThrowException);
+        }
+
+        private static bool ContainsReparsePoint(string root, string directory)
+        {
+            var current = new DirectoryInfo(directory);
+            var rootPath = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+            while (current != null && current.FullName.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+            {
+                if ((current.Attributes & FileAttributes.ReparsePoint) != 0) return true;
+                if (current.FullName.Equals(rootPath, StringComparison.OrdinalIgnoreCase)) break;
+                current = current.Parent;
+            }
+            return false;
+        }
+
+        private static bool ContainsReparsePointInTree(string directory)
+        {
+            var pending = new System.Collections.Generic.Stack<DirectoryInfo>();
+            pending.Push(new DirectoryInfo(directory));
+            while (pending.Count > 0)
+            {
+                var current = pending.Pop();
+                foreach (var item in current.EnumerateFileSystemInfos())
+                {
+                    if ((item.Attributes & FileAttributes.ReparsePoint) != 0) return true;
+                    var child = item as DirectoryInfo;
+                    if (child != null) pending.Push(child);
+                }
+            }
+            return false;
         }
 
         private static string AppendSeparator(string value)

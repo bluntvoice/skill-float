@@ -208,20 +208,25 @@ namespace SkillFloat
                     if (!response.IsSuccessStatusCode) throw new InvalidOperationException("AI 接口返回 " + (int)response.StatusCode);
                     var root = Json.DeserializeObject(body) as Dictionary<string, object>;
                     var content = ExtractContent(root);
-                    var parsed = ExtractJson(content);
-                    var suggestion = new TranslationSuggestion
-                    {
-                        shortName = includeTranslation ? Clean(GetString(parsed, "short_name"), 24) : skill.DisplayName,
-                        descriptionZh = includeTranslation ? Clean(GetString(parsed, "description_zh"), 300) : skill.LocalizedDescription,
-                        category = NormalizeCategory(GetString(parsed, "category")),
-                        tags = NormalizeTags(GetArray(parsed, "tags")),
-                        engine = "ai"
-                    };
-                    if (suggestion.tags.Count == 0) suggestion.tags.Add("通用");
-                    if (includeTranslation && (suggestion.shortName.Length == 0 || suggestion.descriptionZh.Length == 0)) throw new InvalidOperationException("AI 未返回有效的中文推荐");
-                    return suggestion;
+                    return ParseSuggestionContent(content, skill, includeTranslation);
                 }
             }
+        }
+
+        internal static TranslationSuggestion ParseSuggestionContent(string content, SkillItem skill, bool includeTranslation)
+        {
+            var parsed = ExtractJson(content);
+            var suggestion = new TranslationSuggestion
+            {
+                shortName = includeTranslation ? Clean(GetString(parsed, "short_name"), 24) : skill.DisplayName,
+                descriptionZh = includeTranslation ? Clean(GetString(parsed, "description_zh"), 300) : skill.LocalizedDescription,
+                category = NormalizeCategory(GetString(parsed, "category")),
+                tags = NormalizeTags(GetArray(parsed, "tags")),
+                engine = "ai"
+            };
+            if (suggestion.tags.Count == 0) suggestion.tags.Add("通用");
+            if (includeTranslation && (suggestion.shortName.Length == 0 || suggestion.descriptionZh.Length == 0)) throw new InvalidOperationException("AI 未返回有效的中文推荐");
+            return suggestion;
         }
 
         private static Uri BuildEndpoint(string value)

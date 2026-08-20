@@ -64,15 +64,17 @@ namespace SkillFloat
             }
         }
 
-        public static UsageSummary Refresh(IList<SkillItem> skills, Action<int, int, string> progress, CancellationToken token)
+        public static UsageSummary Refresh(IList<SkillItem> skills, Action<int, int, string> progress, CancellationToken token, AppSettings settings = null)
         {
             lock (Gate)
             {
+                settings = settings ?? Storage.LoadAppSettings();
                 var store = Normalize(Storage.LoadUsage());
                 var catalog = new Catalog(skills);
-                var files = DiscoverHistoryFiles();
+                var files = DiscoverHistoryFiles(settings);
                 var active = new HashSet<string>(files.Select(file => file.Key), StringComparer.OrdinalIgnoreCase);
-                foreach (var key in store.files.Keys.Where(key => !active.Contains(key)).ToList()) store.files.Remove(key);
+                var enabledSources = EnabledSources(settings);
+                foreach (var key in store.files.Keys.Where(key => enabledSources.Contains(store.files[key].source) && !active.Contains(key)).ToList()) store.files.Remove(key);
 
                 for (var index = 0; index < files.Count; index++)
                 {
@@ -90,16 +92,17 @@ namespace SkillFloat
 
                 store.last_refreshed_at = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 Storage.SaveUsage(store);
-                return Summarize(store, files);
+                return Summarize(store, files, enabledSources);
             }
         }
 
-        public static UsageSummary Current(IList<SkillItem> skills)
+        public static UsageSummary Current(IList<SkillItem> skills, AppSettings settings = null)
         {
             lock (Gate)
             {
+                settings = settings ?? Storage.LoadAppSettings();
                 var store = Normalize(Storage.LoadUsage());
-                return Summarize(store, DiscoverHistoryFiles());
+                return Summarize(store, DiscoverHistoryFiles(settings), EnabledSources(settings));
             }
         }
 
@@ -130,17 +133,17 @@ namespace SkillFloat
             return store;
         }
 
-        private static List<HistoryFile> DiscoverHistoryFiles()
+        private static List<HistoryFile> DiscoverHistoryFiles(AppSettings settings)
         {
             var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             var result = new Dictionary<string, HistoryFile>(StringComparer.OrdinalIgnoreCase);
-            AddFiles(result, "Codex", new[] { Path.Combine(home, ".codex", "sessions"), Path.Combine(home, ".codex", "archived_sessions") }, false);
-            AddFiles(result, "Claude Code", new[] { Path.Combine(home, ".claude", "projects"), Path.Combine(home, ".claude", "sessions") }, false);
-            AddFiles(result, "OpenClaw", new[] { Path.Combine(home, ".openclaw"), Path.Combine(home, ".config", "openclaw") }, true);
+            if (settings.scanCodex) AddFiles(result, "Codex", new[] { Path.Combine(home, ".codex", "sessions"), Path.Combine(home, ".codex", "archived_sessions") });
+            if (settings.scanClaudeCode) AddFiles(result, "Claude Code", new[] { Path.Combine(home, ".claude", "projects"), Path.Combine(home, ".claude", "sessions") });
+            if (settings.scanOpenClaw) AddFiles(result, "OpenClaw", new[] { Path.Combine(home, ".openclaw"), Path.Combine(home, ".config", "openclaw") });
             return result.Values.ToList();
         }
 
-        private static void AddFiles(Dictionary<string, HistoryFile> result, string source, IEnumerable<string> roots, bool fullPathKey)
+        private static void AddFiles(Dictionary<string, HistoryFile> result, string source, IEnumerable<string> roots)
         {
             foreach (var root in roots)
             {
@@ -149,7 +152,7 @@ namespace SkillFloat
                 {
                     foreach (var path in Directory.EnumerateFiles(root, "*.jsonl", SearchOption.AllDirectories))
                     {
-                        var key = source + ":" + (fullPathKey ? NormalizePath(path) : Path.GetFileName(path));
+                        var key = source + ":" + NormalizePath(Path.GetFullPath(path));
                         result[key] = new HistoryFile { Key = key, Source = source, Path = path };
                     }
                 }
@@ -259,7 +262,7 @@ namespace SkillFloat
             cursor.seen_in_turn = seen.ToList();
         }
 
-        private static UsageSummary Summarize(UsageStore store, IList<HistoryFile> currentFiles)
+        private static UsageSummary Summarize(UsageStore store, IList<HistoryFile> currentFiles, HashSet<string> enabledSources)
         {
             var summary = new UsageSummary();
             Action<string, string, long> add = (invocation, source, count) =>
@@ -273,7 +276,7 @@ namespace SkillFloat
                 sources[source] = current + count;
             };
             foreach (var pair in store.local_counts) add(pair.Key, "Skill Float", pair.Value);
-            foreach (var cursor in store.files.Values) foreach (var pair in cursor.counts) add(pair.Key, cursor.source, pair.Value);
+            foreach (var cursor in store.files.Values.Where(cursor => enabledSources.Contains(cursor.source))) foreach (var pair in cursor.counts) add(pair.Key, cursor.source, pair.Value);
             summary.Total = summary.Counts.Values.Sum();
             summary.UsedSkills = summary.Counts.Count(pair => pair.Value > 0);
             foreach (var name in new[] { "Skill Float", "Codex", "Claude Code", "OpenClaw" })
@@ -283,6 +286,15 @@ namespace SkillFloat
                 summary.Sources.Add(new UsageSourceSummary { Name = name, Detected = name == "Skill Float" || files > 0, Files = files, Count = count });
             }
             return summary;
+        }
+
+        private static HashSet<string> EnabledSources(AppSettings settings)
+        {
+            var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (settings.scanCodex) result.Add("Codex");
+            if (settings.scanClaudeCode) result.Add("Claude Code");
+            if (settings.scanOpenClaw) result.Add("OpenClaw");
+            return result;
         }
 
         private static string NormalizePath(string value)
