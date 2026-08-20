@@ -14,12 +14,9 @@ dist-ssr
 release/
 native/**/bin/
 native/**/obj/
-src-tauri/icons/android/
-src-tauri/icons/ios/
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+.vscode/
 .idea
 .DS_Store
 *.suo

@@ -8,30 +8,35 @@ SetCompressorDictSize 32
 !include "x64.nsh"
 
 !define PRODUCT_NAME "Skill Float"
-!define PRODUCT_VERSION "0.3.2"
+!ifndef PRODUCT_VERSION
+    !error "请通过 /DPRODUCT_VERSION=x.y.z 传入 VERSION。"
+!endif
+!ifndef PRODUCT_VERSION_QUAD
+    !error "请通过 /DPRODUCT_VERSION_QUAD=x.y.z.0 传入四段版本号。"
+!endif
 !define PRODUCT_PUBLISHER "bluntvoice"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Skill Float"
 !define APP_EXE "SkillFloat.exe"
 
 Name "${PRODUCT_NAME}"
-OutFile "..\release\Skill Float_0.3.2_x64-setup.exe"
+OutFile "..\release\Skill Float_${PRODUCT_VERSION}_x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\Skill Float"
 InstallDirRegKey HKCU "${UNINSTALL_KEY}" "InstallLocation"
-Icon "..\src-tauri\icons\icon.ico"
-UninstallIcon "..\src-tauri\icons\icon.ico"
+Icon "..\assets\icon.ico"
+UninstallIcon "..\assets\icon.ico"
 BrandingText "Skill Float · 轻量原生版"
 ManifestDPIAware true
-VIProductVersion "0.3.2.0"
+VIProductVersion "${PRODUCT_VERSION_QUAD}"
 VIAddVersionKey /LANG=2052 "ProductName" "Skill Float"
 VIAddVersionKey /LANG=2052 "CompanyName" "bluntvoice"
 VIAddVersionKey /LANG=2052 "FileDescription" "Skill Float 中文安装程序"
-VIAddVersionKey /LANG=2052 "FileVersion" "0.3.2"
-VIAddVersionKey /LANG=2052 "ProductVersion" "0.3.2"
+VIAddVersionKey /LANG=2052 "FileVersion" "${PRODUCT_VERSION}"
+VIAddVersionKey /LANG=2052 "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey /LANG=2052 "LegalCopyright" "Copyright 2026 bluntvoice"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "..\src-tauri\icons\icon.ico"
-!define MUI_UNICON "..\src-tauri\icons\icon.ico"
+!define MUI_ICON "..\assets\icon.ico"
+!define MUI_UNICON "..\assets\icon.ico"
 !define MUI_WELCOMEPAGE_TITLE "安装 Skill Float"
 !define MUI_WELCOMEPAGE_TEXT "轻量的 Skill 悬浮选择器。$\r$\n$\r$\n更新时会自动保留 API 配置、汉化结果、分类、标签、收藏与调用统计。"
 !define MUI_DIRECTORYPAGE_TEXT_TOP "选择安装位置。已有版本会在原位置直接升级，不显示旧版卸载界面。"
@@ -58,6 +63,7 @@ Var OldUninstaller
 Var OldInstallLocation
 Var MigrationExit
 Var UninstallExit
+Var OldStartup
 
 Function .onInit
     SetShellVarContext current
@@ -66,6 +72,7 @@ Function .onInit
         Abort
     ${EndIf}
     ReadRegStr $OldInstallLocation HKCU "${UNINSTALL_KEY}" "InstallLocation"
+    ReadRegStr $OldStartup HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SkillFloat"
     ${If} $OldInstallLocation != ""
         ; Tauri 旧版把安装目录连同双引号写入注册表；先去掉首尾引号。
         StrCpy $0 $OldInstallLocation 1
@@ -125,6 +132,9 @@ old_uninstall_done:
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoModify" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "NoRepair" 1
     WriteRegDWORD HKCU "${UNINSTALL_KEY}" "EstimatedSize" 1800
+    ${If} $OldStartup != ""
+        WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SkillFloat" '"$INSTDIR\${APP_EXE}" --startup'
+    ${EndIf}
 SectionEnd
 
 Section "Uninstall"
@@ -138,5 +148,6 @@ Section "Uninstall"
     RMDir "$SMPROGRAMS\Skill Float"
     RMDir "$INSTDIR"
     DeleteRegKey HKCU "${UNINSTALL_KEY}"
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "SkillFloat"
     DetailPrint "用户数据与 API 配置已保留，可供以后重新安装使用。"
 SectionEnd
