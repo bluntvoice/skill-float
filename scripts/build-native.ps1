@@ -26,12 +26,12 @@ function Find-MSBuild {
         if (Test-Path -LiteralPath $ExplicitPath -PathType Leaf) { return (Resolve-Path -LiteralPath $ExplicitPath).Path }
         throw "指定的 MSBuild 不存在：$ExplicitPath"
     }
-    $vswhereCandidates = @(
+    $vswhereCandidates = @(@(
         (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'),
         (Join-Path $env:ProgramFiles 'Microsoft Visual Studio\Installer\vswhere.exe')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) })
     $vswhereOnPath = Get-Command vswhere.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($vswhereOnPath) { $vswhereCandidates += $vswhereOnPath.Source }
+    if ($vswhereOnPath) { $vswhereCandidates += @($vswhereOnPath.Source) }
     foreach ($vswhere in $vswhereCandidates | Select-Object -Unique) {
         $found = & $vswhere -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1
         if ($found -and (Test-Path -LiteralPath $found -PathType Leaf)) { return $found }
